@@ -1,0 +1,85 @@
+{
+  "name": "classchaeum",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "description": "클래스채움 - AI 생활기록부 생성 앱",
+  "author": "hanol.hs.kr",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build-with-types": "tsc && vite build",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview",
+    "electron": "wait-on tcp:5174 && cross-env IS_DEV=true electron .",
+    "electron:pack": "electron-builder",
+    "preelectron:pack": "npm run build",
+    "electron:dev": "concurrently \"npm run dev -- --port 5174\" \"npm run electron\"",
+    "electron:build": "npm run build && electron-builder",
+    "postinstall": "electron-builder install-app-deps",
+    "deploy": "npm run build && firebase deploy",
+    "deploy:hosting": "npm run build && firebase deploy --only hosting",
+    "deploy:rules": "firebase deploy --only firestore:rules"
+  },
+  "dependencies": {
+    "@emailjs/browser": "^4.4.1",
+    "@tailwindcss/line-clamp": "^0.4.4",
+    "@tanstack/react-query": "^4.32.6",
+    "@types/uuid": "^10.0.0",
+    "clsx": "^2.0.0",
+    "crypto-js": "^4.1.1",
+    "date-fns": "^2.30.0",
+    "firebase": "^10.3.0",
+    "framer-motion": "^10.16.1",
+    "lucide-react": "^0.263.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.15.0",
+    "tailwind-merge": "^1.14.0",
+    "uuid": "^11.1.0",
+    "xlsx": "^0.18.5",
+    "zustand": "^4.4.1"
+  },
+  "devDependencies": {
+    "@types/crypto-js": "^4.1.1",
+    "@types/react": "^18.2.15",
+    "@types/react-dom": "^18.2.7",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "@vitejs/plugin-react": "^4.0.3",
+    "autoprefixer": "^10.4.14",
+    "concurrently": "^8.2.0",
+    "cross-env": "^7.0.3",
+    "electron": "^26.0.0",
+    "electron-builder": "^24.6.3",
+    "eslint": "^8.45.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.3",
+    "postcss": "^8.4.27",
+    "tailwindcss": "^3.3.0",
+    "typescript": "^5.0.2",
+    "vite": "^4.4.5",
+    "wait-on": "^7.0.1"
+  },
+  "build": {
+    "appId": "kr.hs.hanol.classchaeum-app",
+    "productName": "클래스채움",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*"
+    ],
+    "mac": {
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "icon": "assets/icon.png"
+    }
+  }
+}
