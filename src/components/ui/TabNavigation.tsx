@@ -34,8 +34,7 @@ export const TabNavigation: React.FC<TabNavigationProps> = ({
             }`}
           >
             <div className="flex items-center justify-center space-x-2">
-              {tab.icon && <span className="text-xl">{tab.icon}</span>}
-              <span>{tab.name}</span>
+              <span className="text-lg">{tab.name}</span>
               {tab.count !== undefined && (
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                   activeTab === tab.id

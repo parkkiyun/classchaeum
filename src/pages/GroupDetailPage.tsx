@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { doc, getDoc } from 'firebase/firestore'
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { useAuth } from '../contexts/AuthContext'
 import { useAppStore } from '../store/appStore'
@@ -14,10 +14,10 @@ import { HanolchaeumPage } from './groups/HanolchaeumPage'
 type TabType = 'dashboard' | 'survey-management' | 'records' | 'hanolchaeum'
 
 const tabs: Tab[] = [
-  { id: 'dashboard', name: '클래스 대시보드', icon: '📊' },
-  { id: 'survey-management', name: '설문 관리', icon: '📋' },
-  { id: 'records', name: '기록 조회', icon: '📝' },
-  { id: 'hanolchaeum', name: '클래스채움', icon: '🤖' }
+  { id: 'dashboard', name: '클래스 대시보드' },
+  { id: 'survey-management', name: '설문 관리' },
+  { id: 'hanolchaeum', name: '클래스채움' },
+  { id: 'records', name: '기록 조회' }
 ]
 
 export const GroupDetailPage: React.FC = () => {
@@ -199,8 +199,191 @@ export const GroupDetailPage: React.FC = () => {
 const GroupDashboard: React.FC<{ group: Group }> = ({ group }) => {
   const { students, getGroupWithStudents, removeStudentFromGroup } = useAppStore()
   const navigate = useNavigate()
+  const [surveyCount, setSurveyCount] = useState(0)
+  const [recordCount, setRecordCount] = useState(0)
+  const [recentActivities, setRecentActivities] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [studentRecords, setStudentRecords] = useState<Map<string, Record<string, boolean>>>(new Map())
   
   const groupWithStudents = getGroupWithStudents(group.id, students)
+
+  // 클래스 유형에 따른 기록 영역 매핑
+  const getRecordAreaByGroupType = (groupType: string) => {
+    switch (groupType) {
+      case '담임':
+        return ['autonomous', 'career', 'behavior'] // 실제 DB에 저장된 키 사용
+      case '교과':
+        return ['subject']
+      case '동아리':
+        return ['club']
+      default:
+        return ['autonomous']
+    }
+  }
+
+  // 영역 키를 한글 라벨로 변환
+  const getAreaLabel = (areaKey: string) => {
+    switch(areaKey) {
+      case 'autonomous': return '자율'
+      case 'career': return '진로'
+      case 'behavior': return '행특'
+      case 'subject': return '교과'
+      case 'club': return '동아리'
+      default: return areaKey
+    }
+  }
+
+  // 통계 데이터 로드 (성능 개선)
+  useEffect(() => {
+    const loadStatistics = async () => {
+      try {
+        setLoading(true)
+        
+        // 병렬로 모든 데이터 로드
+        const [surveysData, reportsData, studentRecordsData] = await Promise.all([
+          loadSurveys(),
+          loadReports(),
+          loadStudentRecords()
+        ])
+        
+        // 최근 활동 구성
+        const activities: any[] = []
+        
+        // 설문 활동 추가
+        surveysData.surveys.forEach(doc => {
+          const data = doc.data()
+          activities.push({
+            type: 'survey',
+            title: data.title,
+            date: data.createdAt?.toDate() || new Date(),
+            icon: '📋'
+          })
+        })
+        
+        // 기록 활동 추가
+        reportsData.reports.forEach(doc => {
+          const data = doc.data()
+          activities.push({
+            type: 'report',
+            title: `${data.studentName || '학생'} - ${getAreaLabel(data.area)}`,
+            date: data.updatedAt?.toDate() || new Date(),
+            icon: '📝'
+          })
+        })
+        
+        // 날짜순 정렬 (최신순)
+        activities.sort((a, b) => b.date.getTime() - a.date.getTime())
+        setRecentActivities(activities.slice(0, 5)) // 최근 5개만
+        
+        // 상태 업데이트
+        setSurveyCount(surveysData.count)
+        setRecordCount(reportsData.count)
+        setStudentRecords(studentRecordsData)
+        
+      } catch (error) {
+        console.error('통계 데이터 로드 실패:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadStatistics()
+  }, [group.id])
+
+  // 설문 데이터 로드
+  const loadSurveys = async () => {
+    try {
+      const surveysRef = collection(db, 'surveys')
+      const surveysQuery = query(
+        surveysRef,
+        where('groupId', '==', group.id),
+        where('teacherId', '==', group.teacherId)
+      )
+      const surveysSnapshot = await getDocs(surveysQuery)
+      console.log('설문 수 조회 성공:', surveysSnapshot.size)
+      
+      return {
+        count: surveysSnapshot.size,
+        surveys: surveysSnapshot.docs
+      }
+    } catch (error) {
+      console.error('설문 데이터 조회 실패:', error)
+      return { count: 0, surveys: [] }
+    }
+  }
+
+  // 기록 데이터 로드
+  const loadReports = async () => {
+    try {
+      const reportsRef = collection(db, 'reports')
+      const reportsQuery = query(
+        reportsRef,
+        where('groupId', '==', group.id),
+        where('teacherId', '==', group.teacherId)
+      )
+      const reportsSnapshot = await getDocs(reportsQuery)
+      console.log('기록 수 조회 성공:', reportsSnapshot.size)
+      
+      return {
+        count: reportsSnapshot.size,
+        reports: reportsSnapshot.docs
+      }
+    } catch (error) {
+      console.error('기록 데이터 조회 실패:', error)
+      return { count: 0, reports: [] }
+    }
+  }
+
+  // 학생별 기록 상태 로드 (성능 개선)
+  const loadStudentRecords = async () => {
+    if (!groupWithStudents?.students.length) return new Map()
+
+    try {
+      const targetAreas = getRecordAreaByGroupType(group.type)
+      const recordsMap = new Map<string, Record<string, boolean>>()
+
+      // 한 번의 쿼리로 모든 기록 가져오기
+      const reportsRef = collection(db, 'reports')
+      const reportsQuery = query(
+        reportsRef,
+        where('groupId', '==', group.id),
+        where('teacherId', '==', group.teacherId)
+      )
+      const reportsSnapshot = await getDocs(reportsQuery)
+      
+      // 학생별, 영역별 기록 존재 여부 매핑
+      const studentAreaRecords = new Map<string, Set<string>>()
+      
+      reportsSnapshot.forEach(doc => {
+        const data = doc.data()
+        const studentId = data.studentId
+        const area = data.area
+        
+        if (!studentAreaRecords.has(studentId)) {
+          studentAreaRecords.set(studentId, new Set())
+        }
+        studentAreaRecords.get(studentId)?.add(area)
+      })
+
+      // 각 학생에 대해 영역별 기록 상태 설정
+      for (const student of groupWithStudents.students) {
+        const studentAreas = studentAreaRecords.get(student.id) || new Set()
+        const areaStatus: Record<string, boolean> = {}
+        
+        targetAreas.forEach(area => {
+          areaStatus[area] = studentAreas.has(area)
+        })
+        
+        recordsMap.set(student.id, areaStatus)
+      }
+
+      console.log('학생별 기록 상태 로드 완료:', recordsMap.size, '명')
+      return recordsMap
+    } catch (error) {
+      console.error('학생 기록 상태 로드 실패:', error)
+      return new Map()
+    }
+  }
 
   const handleRemoveStudent = async (studentId: string) => {
     if (!confirm('이 학생을 클래스에서 제거하시겠습니까?')) return
@@ -225,9 +408,9 @@ const GroupDashboard: React.FC<{ group: Group }> = ({ group }) => {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center">
             <div className="flex-shrink-0">
-              <svg className="h-8 w-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
-              </svg>
+              <div className="h-8 w-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                <span className="text-blue-600 text-lg">👥</span>
+              </div>
             </div>
             <div className="ml-5 w-0 flex-1">
               <dl>
@@ -241,14 +424,20 @@ const GroupDashboard: React.FC<{ group: Group }> = ({ group }) => {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center">
             <div className="flex-shrink-0">
-              <svg className="h-8 w-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-              </svg>
+              <div className="h-8 w-8 bg-green-100 rounded-lg flex items-center justify-center">
+                <span className="text-green-600 text-lg">📋</span>
+              </div>
             </div>
             <div className="ml-5 w-0 flex-1">
               <dl>
                 <dt className="text-sm font-medium text-gray-500 truncate">설문 응답</dt>
-                <dd className="text-lg font-medium text-gray-900">0개</dd>
+                <dd className="text-lg font-medium text-gray-900">
+                  {loading ? (
+                    <div className="animate-pulse bg-gray-200 h-6 w-12 rounded"></div>
+                  ) : (
+                    `${surveyCount}개`
+                  )}
+                </dd>
               </dl>
             </div>
           </div>
@@ -257,14 +446,20 @@ const GroupDashboard: React.FC<{ group: Group }> = ({ group }) => {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center">
             <div className="flex-shrink-0">
-              <svg className="h-8 w-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
+              <div className="h-8 w-8 bg-purple-100 rounded-lg flex items-center justify-center">
+                <span className="text-purple-600 text-lg">📝</span>
+              </div>
             </div>
             <div className="ml-5 w-0 flex-1">
               <dl>
                 <dt className="text-sm font-medium text-gray-500 truncate">생성된 기록</dt>
-                <dd className="text-lg font-medium text-gray-900">0개</dd>
+                <dd className="text-lg font-medium text-gray-900">
+                  {loading ? (
+                    <div className="animate-pulse bg-gray-200 h-6 w-12 rounded"></div>
+                  ) : (
+                    `${recordCount}개`
+                  )}
+                </dd>
               </dl>
             </div>
           </div>
@@ -303,54 +498,75 @@ const GroupDashboard: React.FC<{ group: Group }> = ({ group }) => {
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">학생 정보</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">학번</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">설문 상태</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">기록 상태</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">관리</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {groupWithStudents.students.map((student) => (
-                  <tr key={student.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <div className="flex-shrink-0 h-8 w-8">
-                          <div className="h-8 w-8 bg-gray-300 rounded-full flex items-center justify-center">
-                            <span className="text-xs font-medium text-gray-700">
-                              {student.name.charAt(0)}
-                            </span>
+                {groupWithStudents.students
+                  .sort((a, b) => a.number - b.number) // 번호순 정렬
+                  .map((student) => {
+                    const studentAreaStatus = studentRecords.get(student.id) || {}
+                    const targetAreas = getRecordAreaByGroupType(group.type)
+                    
+                    return (
+                      <tr key={student.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center">
+                            <div className="flex-shrink-0 h-8 w-8">
+                              <div className="h-8 w-8 bg-gray-300 rounded-full flex items-center justify-center">
+                                <span className="text-xs font-medium text-gray-700">
+                                  {student.name.charAt(0)}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="ml-3">
+                              <div className="text-sm font-medium text-gray-900">{student.name}</div>
+                              <div className="text-sm text-gray-500">
+                                {student.grade}학년 {student.class}반 {student.number}번
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                        <div className="ml-3">
-                          <div className="text-sm font-medium text-gray-900">{student.name}</div>
-                          <div className="text-sm text-gray-500">
-                            {student.grade}학년 {student.class}반
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {student.number}번
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                        미제출
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                        미생성
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <button
-                        onClick={() => handleRemoveStudent(student.id)}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        제거
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {student.number}번
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {loading ? (
+                            <div className="flex space-x-1">
+                              {targetAreas.map((_, index) => (
+                                <div key={index} className="animate-pulse bg-gray-200 h-5 w-10 rounded-full"></div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {targetAreas.map(area => (
+                                <span
+                                  key={area}
+                                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                                    studentAreaStatus[area]
+                                      ? 'bg-green-100 text-green-800 border border-green-200'
+                                      : 'bg-gray-100 text-gray-600 border border-gray-200'
+                                  }`}
+                                >
+                                  {studentAreaStatus[area] && '✓ '}
+                                  {getAreaLabel(area)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <button
+                            onClick={() => handleRemoveStudent(student.id)}
+                            className="text-red-600 hover:text-red-900"
+                          >
+                            제거
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
               </tbody>
             </table>
           </div>
@@ -362,15 +578,64 @@ const GroupDashboard: React.FC<{ group: Group }> = ({ group }) => {
         <div className="px-6 py-4 border-b border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900">최근 활동</h3>
         </div>
-        <div className="px-6 py-12 text-center">
-          <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <h4 className="mt-2 text-sm font-medium text-gray-900">최근 활동이 없습니다</h4>
-          <p className="mt-1 text-sm text-gray-500">
-            설문을 업로드하거나 기록을 생성하면 여기에 표시됩니다.
-          </p>
-        </div>
+        
+        {loading ? (
+          <div className="px-6 py-4 space-y-3">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="flex items-center space-x-3 animate-pulse">
+                <div className="h-8 w-8 bg-gray-200 rounded-full"></div>
+                <div className="flex-1">
+                  <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+                  <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                </div>
+                <div className="h-3 bg-gray-200 rounded w-16"></div>
+              </div>
+            ))}
+          </div>
+        ) : recentActivities.length === 0 ? (
+          <div className="px-6 py-12 text-center">
+            <div className="mx-auto h-12 w-12 bg-gray-100 rounded-full flex items-center justify-center">
+              <span className="text-gray-400 text-xl">🕒</span>
+            </div>
+            <h4 className="mt-2 text-sm font-medium text-gray-900">최근 활동이 없습니다</h4>
+            <p className="mt-1 text-sm text-gray-500">
+              설문을 업로드하거나 기록을 생성하면 여기에 표시됩니다.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-200">
+            {recentActivities.map((activity, index) => (
+              <div key={index} className="px-6 py-4 flex items-center space-x-3">
+                <div className="flex-shrink-0">
+                  <div className="h-8 w-8 bg-gray-100 rounded-full flex items-center justify-center">
+                    <span className="text-sm">{activity.icon}</span>
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">
+                    {activity.title}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {activity.type === 'survey' ? '설문 생성' : '기록 생성'} • {
+                      new Intl.RelativeTimeFormat('ko', { numeric: 'auto' }).format(
+                        Math.floor((activity.date.getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
+                        'day'
+                      )
+                    }
+                  </p>
+                </div>
+                <div className="text-xs text-gray-400">
+                  {activity.date.toLocaleDateString('ko-KR', { 
+                    month: 'short', 
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

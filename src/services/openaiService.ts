@@ -1,4 +1,6 @@
 import { DEFAULT_PROMPTS } from '../constants/defaultPrompts';
+import { userAPIService } from './apiConfigService';
+import type { APIConfig } from '../types';
 
 interface OpenAIConfig {
   apiKey: string
@@ -40,11 +42,29 @@ class OpenAIService {
     this.loadApiKey()
   }
 
-  // API 키 로드 (개인 키 우선)
-  private loadApiKey(): void {
-    // 1. 개인 API 키 우선 (localStorage에서)
+  // API 설정 로드 (새로운 시스템 우선, 기존 방식 fallback)
+  private async loadApiConfig(): Promise<void> {
     const userId = this.getCurrentUserId()
+    
     if (userId) {
+      try {
+        // 1. 새로운 API 설정 시스템에서 로드
+        const effectiveConfig = await userAPIService.getEffectiveAPIConfig(userId)
+        if (effectiveConfig) {
+          this.config = {
+            apiKey: effectiveConfig.apiKey,
+            baseURL: effectiveConfig.baseURL,
+            model: effectiveConfig.model,
+            maxTokens: effectiveConfig.maxTokens,
+            temperature: effectiveConfig.temperature
+          }
+          return
+        }
+      } catch (error) {
+        console.warn('⚠️ 새로운 API 설정 로드 실패, 기존 방식 사용:', error)
+      }
+
+      // 2. 기존 개인 API 키 (호환성 유지)
       const personalKey = localStorage.getItem(`openai-api-key-${userId}`)
       if (personalKey) {
         this.config.apiKey = personalKey
@@ -52,15 +72,23 @@ class OpenAIService {
       }
     }
 
-    // 2. 전역 설정 API 키
+    // 3. 전역 설정 API 키
     const globalKey = localStorage.getItem('VITE_OPENAI_API_KEY')
     if (globalKey) {
       this.config.apiKey = globalKey
       return
     }
 
-    // 3. 환경변수 API 키
+    // 4. 환경변수 API 키
     this.config.apiKey = import.meta.env.VITE_OPENAI_API_KEY || ''
+  }
+
+  // 동기식 API 키 로드 (기존 호환성)
+  private loadApiKey(): void {
+    // 비동기 로드를 동기식으로 래핑 (기존 코드 호환성)
+    this.loadApiConfig().catch(error => {
+      console.warn('⚠️ API 설정 로드 실패:', error)
+    })
   }
 
   // 현재 사용자 ID 가져오기
@@ -130,40 +158,94 @@ class OpenAIService {
     try {
       console.log('🤖 AI 생성 시작:', request)
 
+      // API 설정을 비동기로 로드
+      await this.loadApiConfig()
+
       if (!this.isConfigured()) {
-        console.warn('⚠️ OpenAI API 키가 설정되지 않았습니다.')
+        console.warn('⚠️ AI API 키가 설정되지 않았습니다.')
         return {
           success: false,
           content: '',
-          error: 'OpenAI API 키가 설정되지 않았습니다.'
+          error: 'AI API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 설정해주세요.'
         }
       }
 
       const prompt = await this.generatePrompt(request)
       console.log('📝 생성된 프롬프트:', prompt)
 
-      const response = await fetch(`${this.config.baseURL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.config.apiKey}`
-        },
-        body: JSON.stringify({
-          model: this.config.model,
-          messages: [
-            {
-              role: 'system',
-              content: '당신은 생활기록부 작성을 도와주는 전문가입니다. 학생의 활동과 성장을 객관적이고 교육적으로 기록해주세요.'
-            },
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
-          max_tokens: this.config.maxTokens,
-          temperature: this.config.temperature
+      // API 제공업체별로 다른 요청 형식 사용
+      let response: Response
+      
+      if (this.config.baseURL.includes('api.openai.com')) {
+        // OpenAI API
+        response = await fetch(`${this.config.baseURL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.config.apiKey}`
+          },
+          body: JSON.stringify({
+            model: this.config.model,
+            messages: [
+              {
+                role: 'system',
+                content: '당신은 생활기록부 작성을 도와주는 전문가입니다. 학생의 활동과 성장을 객관적이고 교육적으로 기록해주세요.'
+              },
+              {
+                role: 'user',
+                content: prompt
+              }
+            ],
+            max_tokens: this.config.maxTokens,
+            temperature: this.config.temperature
+          })
         })
-      })
+      } else if (this.config.baseURL.includes('api.anthropic.com')) {
+        // Anthropic Claude API
+        response = await fetch(`${this.config.baseURL}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': this.config.apiKey,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model: this.config.model,
+            max_tokens: this.config.maxTokens,
+            temperature: this.config.temperature,
+            messages: [
+              {
+                role: 'user',
+                content: `당신은 생활기록부 작성을 도와주는 전문가입니다. 학생의 활동과 성장을 객관적이고 교육적으로 기록해주세요.\n\n${prompt}`
+              }
+            ]
+          })
+        })
+      } else {
+        // 기타 OpenAI 호환 API
+        response = await fetch(`${this.config.baseURL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.config.apiKey}`
+          },
+          body: JSON.stringify({
+            model: this.config.model,
+            messages: [
+              {
+                role: 'system',
+                content: '당신은 생활기록부 작성을 도와주는 전문가입니다. 학생의 활동과 성장을 객관적이고 교육적으로 기록해주세요.'
+              },
+              {
+                role: 'user',
+                content: prompt
+              }
+            ],
+            max_tokens: this.config.maxTokens,
+            temperature: this.config.temperature
+          })
+        })
+      }
 
       if (!response.ok) {
         const errorData = await response.json()
@@ -172,10 +254,21 @@ class OpenAIService {
       }
 
       const data = await response.json()
-      console.log('✅ OpenAI 응답:', data)
+      console.log('✅ AI 응답:', data)
 
-      const content = data.choices?.[0]?.message?.content || ''
-      const tokensUsed = data.usage?.total_tokens || 0
+      // API 제공업체별로 다른 응답 형식 처리
+      let content = ''
+      let tokensUsed = 0
+
+      if (this.config.baseURL.includes('api.anthropic.com')) {
+        // Anthropic Claude 응답 형식
+        content = data.content?.[0]?.text || ''
+        tokensUsed = data.usage?.input_tokens + data.usage?.output_tokens || 0
+      } else {
+        // OpenAI 호환 응답 형식
+        content = data.choices?.[0]?.message?.content || ''
+        tokensUsed = data.usage?.total_tokens || 0
+      }
 
       return {
         success: true,

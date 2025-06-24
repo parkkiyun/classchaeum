@@ -2,9 +2,12 @@ import React, { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from '../components/ui/Button'
 import { LoadingSpinner } from '../components/ui/LoadingSpinner'
-import { Save, Key, Eye, EyeOff, TestTube, CheckCircle, XCircle, FileText } from 'lucide-react'
+import { Save, Key, Eye, EyeOff, TestTube, CheckCircle, XCircle, FileText, Globe, User } from 'lucide-react'
 import { DEFAULT_BYTE_LIMITS, type AreaByteLimits, formatByteLength } from '../utils/textUtils'
 import type { GenerateRequest } from '../services/openaiService'
+import { userAPIService, schoolAPIService } from '../services/apiConfigService'
+import { AI_PROVIDERS, AI_MODELS, DEFAULT_API_CONFIG } from '../constants/aiModels'
+import type { UserAPIPreference, SchoolAPIConfig, APIConfig, AIProvider } from '../types'
 
 export const SettingsPage: React.FC = () => {
   const { teacher } = useAuth()
@@ -21,10 +24,38 @@ export const SettingsPage: React.FC = () => {
   const [byteLimits, setByteLimits] = useState<AreaByteLimits>(DEFAULT_BYTE_LIMITS)
   const [savingLimits, setSavingLimits] = useState(false)
 
+  // API 설정 관련 상태
+  const [userApiPreference, setUserApiPreference] = useState<UserAPIPreference | null>(null)
+  const [schoolApiConfig, setSchoolApiConfig] = useState<SchoolAPIConfig | null>(null)
+  const [personalApiConfig, setPersonalApiConfig] = useState<APIConfig>({
+    id: '',
+    provider: 'openai',
+    apiKey: '',
+    baseURL: AI_PROVIDERS.openai.baseURL,
+    model: 'gpt-4o-mini',
+    maxTokens: DEFAULT_API_CONFIG.maxTokens,
+    temperature: DEFAULT_API_CONFIG.temperature,
+    isActive: true,
+    createdAt: new Date(),
+    updatedAt: new Date()
+  })
+  const [apiLoading, setApiLoading] = useState(false)
+  const [apiSaving, setApiSaving] = useState(false)
+
   // 저장된 설정 로드
   useEffect(() => {
     if (teacher) {
-      // API 키 로드
+      loadSettings()
+    }
+  }, [teacher])
+
+  const loadSettings = async () => {
+    if (!teacher) return
+
+    try {
+      setApiLoading(true)
+
+      // API 키 로드 (기존 방식)
       const savedKey = localStorage.getItem(`openai-api-key-${teacher.uid}`)
       if (savedKey) {
         setOpenaiApiKey(savedKey)
@@ -40,8 +71,25 @@ export const SettingsPage: React.FC = () => {
           setByteLimits(DEFAULT_BYTE_LIMITS)
         }
       }
+
+      // 사용자 API 설정 로드
+      const userPreference = await userAPIService.getUserAPIPreference(teacher.uid)
+      setUserApiPreference(userPreference)
+
+      if (userPreference?.personalAPIConfig) {
+        setPersonalApiConfig(userPreference.personalAPIConfig)
+      }
+
+      // 학교 공용 API 설정 로드
+      const schoolConfig = await schoolAPIService.getActiveSchoolAPIConfig()
+      setSchoolApiConfig(schoolConfig)
+
+    } catch (error) {
+      console.error('설정 로드 실패:', error)
+    } finally {
+      setApiLoading(false)
     }
-  }, [teacher])
+  }
 
   // API 키 저장
   const handleSaveApiKey = async () => {
@@ -152,6 +200,131 @@ export const SettingsPage: React.FC = () => {
     }))
   }
 
+  // API 설정 관련 함수들
+  const handleApiTypeChange = async (useSchoolAPI: boolean) => {
+    if (!teacher) return
+
+    try {
+      setApiSaving(true)
+      
+      const preference: Omit<UserAPIPreference, 'createdAt' | 'updatedAt'> = {
+        userId: teacher.uid,
+        useSchoolAPI,
+        personalAPIConfig: useSchoolAPI ? undefined : personalApiConfig
+      }
+
+      await userAPIService.saveUserAPIPreference(preference)
+      await loadSettings() // 설정 다시 로드
+      
+      alert(`${useSchoolAPI ? '학교 공용' : '개인'} API 설정으로 변경되었습니다.`)
+    } catch (error) {
+      console.error('API 설정 변경 실패:', error)
+      alert('API 설정 변경에 실패했습니다.')
+    } finally {
+      setApiSaving(false)
+    }
+  }
+
+  const handlePersonalApiChange = (field: keyof APIConfig, value: any) => {
+    setPersonalApiConfig(prev => ({
+      ...prev,
+      [field]: value,
+      updatedAt: new Date()
+    }))
+  }
+
+  const handleProviderChange = (provider: AIProvider) => {
+    setPersonalApiConfig(prev => ({
+      ...prev,
+      provider,
+      baseURL: AI_PROVIDERS[provider].baseURL,
+      model: AI_MODELS[provider][0]?.id || ''
+    }))
+  }
+
+  const handleSavePersonalApi = async () => {
+    if (!teacher) return
+    
+    if (!personalApiConfig.apiKey.trim()) {
+      alert('API 키를 입력해주세요.')
+      return
+    }
+
+    try {
+      setApiSaving(true)
+      
+      const preference: Omit<UserAPIPreference, 'createdAt' | 'updatedAt'> = {
+        userId: teacher.uid,
+        useSchoolAPI: false,
+        personalAPIConfig: {
+          ...personalApiConfig,
+          id: teacher.uid, // 사용자 ID를 API 설정 ID로 사용
+        }
+      }
+
+      await userAPIService.saveUserAPIPreference(preference)
+      await loadSettings()
+      
+      alert('개인 API 설정이 저장되었습니다.')
+    } catch (error) {
+      console.error('개인 API 설정 저장 실패:', error)
+      alert('개인 API 설정 저장에 실패했습니다.')
+    } finally {
+      setApiSaving(false)
+    }
+  }
+
+  const handleTestPersonalApi = async () => {
+    if (!personalApiConfig.apiKey.trim()) {
+      alert('API 키를 먼저 입력해주세요.')
+      return
+    }
+
+    try {
+      setTesting(true)
+      setTestResult(null)
+      
+      let testUrl = ''
+      let headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      }
+
+      switch (personalApiConfig.provider) {
+        case 'openai':
+          testUrl = `${personalApiConfig.baseURL}/models`
+          headers['Authorization'] = `Bearer ${personalApiConfig.apiKey}`
+          break
+        case 'anthropic':
+          testUrl = `${personalApiConfig.baseURL}/messages`
+          headers['x-api-key'] = personalApiConfig.apiKey
+          headers['anthropic-version'] = '2023-06-01'
+          break
+        case 'google':
+          testUrl = `${personalApiConfig.baseURL}/models?key=${personalApiConfig.apiKey}`
+          break
+        default:
+          testUrl = `${personalApiConfig.baseURL}/models`
+          headers['Authorization'] = `Bearer ${personalApiConfig.apiKey}`
+      }
+
+      const response = await fetch(testUrl, { headers })
+
+      if (response.ok) {
+        setTestResult('success')
+        setTestMessage('API 키가 정상적으로 작동합니다!')
+      } else {
+        const error = await response.json()
+        setTestResult('error')
+        setTestMessage(`API 키 오류: ${error.error?.message || error.message || '인증 실패'}`)
+      }
+    } catch (error) {
+      setTestResult('error')
+      setTestMessage('네트워크 오류가 발생했습니다.')
+    } finally {
+      setTesting(false)
+    }
+  }
+
   if (!teacher) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -205,89 +378,245 @@ export const SettingsPage: React.FC = () => {
           <Key className="w-5 h-5 text-blue-600" />
           <h2 className="text-lg font-semibold text-gray-900">AI API 설정</h2>
         </div>
-        
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              OpenAI API 키
-            </label>
-            <div className="relative">
-              <input
-                type={showApiKey ? 'text' : 'password'}
-                value={openaiApiKey}
-                onChange={(e) => setOpenaiApiKey(e.target.value)}
-                placeholder="sk-..."
-                className="w-full px-3 py-2 pr-20 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <button
-                type="button"
-                onClick={() => setShowApiKey(!showApiKey)}
-                className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
-              >
-                {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              개인 OpenAI API 키를 입력하면 AI 생성 기능을 사용할 수 있습니다.
-            </p>
+
+        {apiLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <LoadingSpinner size="lg" />
+            <span className="ml-2 text-gray-600">API 설정을 불러오는 중...</span>
           </div>
+        ) : (
+          <div className="space-y-6">
+            {/* API 타입 선택 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                사용할 API 설정
+              </label>
+              <div className="space-y-3">
+                {/* 학교 공용 API */}
+                <div className="flex items-start space-x-3">
+                  <input
+                    type="radio"
+                    id="school-api"
+                    name="api-type"
+                    checked={userApiPreference?.useSchoolAPI !== false}
+                    onChange={() => handleApiTypeChange(true)}
+                    disabled={apiSaving}
+                    className="mt-1"
+                  />
+                  <div className="flex-1">
+                    <label htmlFor="school-api" className="flex items-center space-x-2 cursor-pointer">
+                      <Globe className="w-4 h-4 text-blue-600" />
+                      <span className="font-medium text-gray-900">학교 공용 API</span>
+                    </label>
+                    {schoolApiConfig ? (
+                      <div className="mt-2 p-3 bg-blue-50 rounded-lg">
+                        <div className="text-sm text-blue-800">
+                          <div className="font-medium">
+                            {AI_PROVIDERS[schoolApiConfig.provider].name} - {schoolApiConfig.model}
+                          </div>
+                          <div className="text-xs text-blue-600 mt-1">
+                            최대 토큰: {schoolApiConfig.maxTokens.toLocaleString()} | 
+                            Temperature: {schoolApiConfig.temperature}
+                          </div>
+                          {schoolApiConfig.description && (
+                            <div className="text-xs text-blue-600 mt-1">
+                              {schoolApiConfig.description}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500 mt-1">
+                        관리자가 설정한 학교 공용 API가 없습니다.
+                      </p>
+                    )}
+                  </div>
+                </div>
 
-          {/* 테스트 결과 */}
-          {testResult && (
-            <div className={`p-3 rounded-lg flex items-center space-x-2 ${
-              testResult === 'success' 
-                ? 'bg-green-50 text-green-800 border border-green-200' 
-                : 'bg-red-50 text-red-800 border border-red-200'
-            }`}>
-              {testResult === 'success' ? (
-                <CheckCircle className="w-4 h-4" />
-              ) : (
-                <XCircle className="w-4 h-4" />
-              )}
-              <span className="text-sm">{testMessage}</span>
+                {/* 개인 API */}
+                <div className="flex items-start space-x-3">
+                  <input
+                    type="radio"
+                    id="personal-api"
+                    name="api-type"
+                    checked={userApiPreference?.useSchoolAPI === false}
+                    onChange={() => handleApiTypeChange(false)}
+                    disabled={apiSaving}
+                    className="mt-1"
+                  />
+                  <div className="flex-1">
+                    <label htmlFor="personal-api" className="flex items-center space-x-2 cursor-pointer">
+                      <User className="w-4 h-4 text-green-600" />
+                      <span className="font-medium text-gray-900">개인 API</span>
+                    </label>
+                    <p className="text-sm text-gray-500 mt-1">
+                      개인 API 키를 사용하여 AI 기능을 이용합니다.
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
-          )}
 
-          {/* 버튼들 */}
-          <div className="flex space-x-3">
-            <Button
-              onClick={handleSaveApiKey}
-              disabled={saving}
-              className="flex items-center space-x-2"
-            >
-              {saving ? (
-                <LoadingSpinner size="sm" />
-              ) : (
-                <Save className="w-4 h-4" />
-              )}
-              <span>저장</span>
-            </Button>
+            {/* 개인 API 설정 */}
+            {userApiPreference?.useSchoolAPI === false && (
+              <div className="border rounded-lg p-4 bg-gray-50">
+                <h3 className="text-md font-medium text-gray-900 mb-4">개인 API 설정</h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* AI 제공업체 선택 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      AI 제공업체
+                    </label>
+                    <select
+                      value={personalApiConfig.provider}
+                      onChange={(e) => handleProviderChange(e.target.value as AIProvider)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {Object.entries(AI_PROVIDERS).map(([key, provider]) => (
+                        <option key={key} value={key}>
+                          {provider.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-            <Button
-              variant="outline"
-              onClick={handleTestApiKey}
-              disabled={testing || !openaiApiKey.trim()}
-              className="flex items-center space-x-2"
-            >
-              {testing ? (
-                <LoadingSpinner size="sm" />
-              ) : (
-                <TestTube className="w-4 h-4" />
-              )}
-              <span>테스트</span>
-            </Button>
+                  {/* 모델 선택 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      모델
+                    </label>
+                    <select
+                      value={personalApiConfig.model}
+                      onChange={(e) => handlePersonalApiChange('model', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {AI_MODELS[personalApiConfig.provider].map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name} (최대 {model.maxTokens.toLocaleString()} 토큰)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-            {openaiApiKey && (
-              <Button
-                variant="outline"
-                onClick={handleRemoveApiKey}
-                className="text-red-600 border-red-300 hover:bg-red-50"
-              >
-                삭제
-              </Button>
+                  {/* API 키 */}
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      API 키
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showApiKey ? 'text' : 'password'}
+                        value={personalApiConfig.apiKey}
+                        onChange={(e) => handlePersonalApiChange('apiKey', e.target.value)}
+                        placeholder="API 키를 입력하세요"
+                        className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                        className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
+                      >
+                        {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Base URL */}
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Base URL
+                    </label>
+                    <input
+                      type="url"
+                      value={personalApiConfig.baseURL}
+                      onChange={(e) => handlePersonalApiChange('baseURL', e.target.value)}
+                      placeholder="API Base URL"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  {/* 최대 토큰 수 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      최대 토큰 수
+                    </label>
+                    <input
+                      type="number"
+                      value={personalApiConfig.maxTokens}
+                      onChange={(e) => handlePersonalApiChange('maxTokens', parseInt(e.target.value) || 4000)}
+                      min="100"
+                      max="128000"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  {/* Temperature */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Temperature (창의성)
+                    </label>
+                    <input
+                      type="number"
+                      value={personalApiConfig.temperature}
+                      onChange={(e) => handlePersonalApiChange('temperature', parseFloat(e.target.value) || 0.7)}
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 테스트 결과 */}
+                {testResult && (
+                  <div className={`mt-4 p-3 rounded-lg flex items-center space-x-2 ${
+                    testResult === 'success' 
+                      ? 'bg-green-50 text-green-800 border border-green-200' 
+                      : 'bg-red-50 text-red-800 border border-red-200'
+                  }`}>
+                    {testResult === 'success' ? (
+                      <CheckCircle className="w-4 h-4" />
+                    ) : (
+                      <XCircle className="w-4 h-4" />
+                    )}
+                    <span className="text-sm">{testMessage}</span>
+                  </div>
+                )}
+
+                {/* 개인 API 버튼들 */}
+                <div className="flex space-x-3 mt-4">
+                  <Button
+                    onClick={handleSavePersonalApi}
+                    disabled={apiSaving}
+                    className="flex items-center space-x-2"
+                  >
+                    {apiSaving ? (
+                      <LoadingSpinner size="sm" />
+                    ) : (
+                      <Save className="w-4 h-4" />
+                    )}
+                    <span>개인 API 저장</span>
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    onClick={handleTestPersonalApi}
+                    disabled={testing || !personalApiConfig.apiKey.trim()}
+                    className="flex items-center space-x-2"
+                  >
+                    {testing ? (
+                      <LoadingSpinner size="sm" />
+                    ) : (
+                      <TestTube className="w-4 h-4" />
+                    )}
+                    <span>API 테스트</span>
+                  </Button>
+                </div>
+              </div>
             )}
           </div>
-        </div>
+        )}
       </div>
 
       {/* 바이트 제한 설정 */}

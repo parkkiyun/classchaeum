@@ -3,10 +3,12 @@ import { collection, query, where, getDocs, doc, updateDoc, addDoc, deleteDoc } 
 import { db } from '../lib/firebase'
 import { useAuth } from '../contexts/AuthContext'
 import { useAppStore } from '../store/appStore'
-import type { Student, ExcelStudent } from '../types'
+import type { Student, ExcelStudent, SchoolAPIConfig, AIProvider } from '../types'
 import * as XLSX from 'xlsx'
 import { LoadingSpinner } from '../components/ui/LoadingSpinner'
 import { Button } from '../components/ui/Button'
+import { schoolAPIService } from '../services/apiConfigService'
+import { AI_PROVIDERS, AI_MODELS, DEFAULT_API_CONFIG } from '../constants/aiModels'
 
 interface PendingTeacher {
   uid: string
@@ -20,7 +22,7 @@ interface PendingTeacher {
 export const AdminPage: React.FC = () => {
   const { teacher } = useAuth()
   const { students, setStudents } = useAppStore()
-  const [activeTab, setActiveTab] = useState<'teachers' | 'students'>('teachers')
+  const [activeTab, setActiveTab] = useState<'teachers' | 'students' | 'api'>('teachers')
   const [pendingTeachers, setPendingTeachers] = useState<PendingTeacher[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -30,12 +32,36 @@ export const AdminPage: React.FC = () => {
     errors: string[]
   } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  // API 설정 관련 상태
+  const [apiConfigs, setApiConfigs] = useState<SchoolAPIConfig[]>([])
+  const [apiLoading, setApiLoading] = useState(false)
+  const [apiSaving, setApiSaving] = useState(false)
+  const [newApiConfig, setNewApiConfig] = useState<{
+    provider: AIProvider
+    apiKey: string
+    baseURL: string
+    model: string
+    maxTokens: number
+    temperature: number
+    description: string
+  }>({
+    provider: 'openai',
+    apiKey: '',
+    baseURL: AI_PROVIDERS.openai.baseURL,
+    model: 'gpt-4o-mini',
+    maxTokens: DEFAULT_API_CONFIG.maxTokens,
+    temperature: DEFAULT_API_CONFIG.temperature,
+    description: ''
+  })
 
   useEffect(() => {
     if (activeTab === 'teachers') {
       fetchPendingTeachers()
-    } else {
+    } else if (activeTab === 'students') {
       loadStudentsFromFirebase()
+    } else if (activeTab === 'api') {
+      loadAPIConfigs()
     }
   }, [activeTab])
 
@@ -360,6 +386,96 @@ export const AdminPage: React.FC = () => {
     XLSX.writeFile(wb, 'student_template.xlsx')
   }
 
+  // API 설정 관련 함수들
+  const loadAPIConfigs = async () => {
+    try {
+      setApiLoading(true)
+      const configs = await schoolAPIService.getSchoolAPIConfigs()
+      setApiConfigs(configs)
+    } catch (error) {
+      console.error('API 설정 로드 실패:', error)
+    } finally {
+      setApiLoading(false)
+    }
+  }
+
+  const handleProviderChange = (provider: AIProvider) => {
+    setNewApiConfig(prev => ({
+      ...prev,
+      provider,
+      baseURL: AI_PROVIDERS[provider].baseURL,
+      model: AI_MODELS[provider][0]?.id || ''
+    }))
+  }
+
+  const handleSaveAPIConfig = async () => {
+    if (!newApiConfig.apiKey.trim()) {
+      alert('API 키를 입력해주세요.')
+      return
+    }
+
+    try {
+      setApiSaving(true)
+      await schoolAPIService.saveSchoolAPIConfig({
+        provider: newApiConfig.provider,
+        apiKey: newApiConfig.apiKey,
+        baseURL: newApiConfig.baseURL,
+        model: newApiConfig.model,
+        maxTokens: newApiConfig.maxTokens,
+        temperature: newApiConfig.temperature,
+        isActive: true,
+        schoolId: 'hanol-hs',
+        configuredBy: teacher?.uid || '',
+        description: newApiConfig.description
+      })
+
+      // 폼 초기화
+      setNewApiConfig({
+        provider: 'openai',
+        apiKey: '',
+        baseURL: AI_PROVIDERS.openai.baseURL,
+        model: 'gpt-4o-mini',
+        maxTokens: DEFAULT_API_CONFIG.maxTokens,
+        temperature: DEFAULT_API_CONFIG.temperature,
+        description: ''
+      })
+
+      // 목록 새로고침
+      await loadAPIConfigs()
+      alert('API 설정이 저장되었습니다.')
+    } catch (error) {
+      console.error('API 설정 저장 실패:', error)
+      alert('API 설정 저장에 실패했습니다.')
+    } finally {
+      setApiSaving(false)
+    }
+  }
+
+  const handleToggleAPIConfig = async (configId: string, isActive: boolean) => {
+    try {
+      await schoolAPIService.updateSchoolAPIConfig(configId, { isActive })
+      await loadAPIConfigs()
+    } catch (error) {
+      console.error('API 설정 토글 실패:', error)
+      alert('API 설정 변경에 실패했습니다.')
+    }
+  }
+
+  const handleDeleteAPIConfig = async (configId: string) => {
+    if (!confirm('정말로 이 API 설정을 삭제하시겠습니까?')) {
+      return
+    }
+
+    try {
+      await schoolAPIService.deleteSchoolAPIConfig(configId)
+      await loadAPIConfigs()
+      alert('API 설정이 삭제되었습니다.')
+    } catch (error) {
+      console.error('API 설정 삭제 실패:', error)
+      alert('API 설정 삭제에 실패했습니다.')
+    }
+  }
+
   // 관리자 권한 확인
   if (!teacher?.roles.includes('admin')) {
     return (
@@ -408,6 +524,16 @@ export const AdminPage: React.FC = () => {
                 }`}
               >
                 👥 학생 관리
+              </button>
+              <button
+                onClick={() => setActiveTab('api')}
+                className={`px-6 py-3 font-medium text-sm ${
+                  activeTab === 'api'
+                    ? 'border-b-2 border-blue-500 text-blue-600'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                🔧 API 설정
               </button>
             </div>
           </div>
@@ -657,6 +783,252 @@ export const AdminPage: React.FC = () => {
                               ))}
                             </tbody>
                           </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'api' && (
+                  <div className="space-y-6">
+                    {/* API 설정 안내 */}
+                    <div className="bg-blue-50 rounded-lg p-4">
+                      <div className="flex items-start">
+                        <div className="p-2 bg-blue-100 rounded-lg mr-4">
+                          <svg className="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <h3 className="font-medium text-blue-900">학교 공용 API 설정</h3>
+                          <p className="text-sm text-blue-700 mt-1">
+                            교사들이 사용할 AI API를 설정합니다. 활성화된 설정이 학교 공용 API로 사용됩니다.<br/>
+                            교사들은 개인 설정에서 학교 공용 API 또는 개인 API를 선택할 수 있습니다.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 새 API 설정 추가 */}
+                    <div className="bg-white border rounded-lg p-6">
+                      <h3 className="text-lg font-medium text-gray-900 mb-4">새 API 설정 추가</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* AI 제공업체 선택 */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            AI 제공업체
+                          </label>
+                          <select
+                            value={newApiConfig.provider}
+                            onChange={(e) => handleProviderChange(e.target.value as AIProvider)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            {Object.entries(AI_PROVIDERS).map(([key, provider]) => (
+                              <option key={key} value={key}>
+                                {provider.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* 모델 선택 */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            모델
+                          </label>
+                          <select
+                            value={newApiConfig.model}
+                            onChange={(e) => setNewApiConfig(prev => ({ ...prev, model: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            {AI_MODELS[newApiConfig.provider].map((model) => (
+                              <option key={model.id} value={model.id}>
+                                {model.name} (최대 {model.maxTokens.toLocaleString()} 토큰)
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* API 키 */}
+                        <div className="md:col-span-2">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            API 키
+                          </label>
+                          <input
+                            type="password"
+                            value={newApiConfig.apiKey}
+                            onChange={(e) => setNewApiConfig(prev => ({ ...prev, apiKey: e.target.value }))}
+                            placeholder="API 키를 입력하세요"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+
+                        {/* Base URL */}
+                        <div className="md:col-span-2">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Base URL
+                          </label>
+                          <input
+                            type="url"
+                            value={newApiConfig.baseURL}
+                            onChange={(e) => setNewApiConfig(prev => ({ ...prev, baseURL: e.target.value }))}
+                            placeholder="API Base URL"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+
+                        {/* 최대 토큰 수 */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            최대 토큰 수
+                          </label>
+                          <input
+                            type="number"
+                            value={newApiConfig.maxTokens}
+                            onChange={(e) => setNewApiConfig(prev => ({ ...prev, maxTokens: parseInt(e.target.value) || 4000 }))}
+                            min="100"
+                            max="128000"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+
+                        {/* Temperature */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Temperature (창의성)
+                          </label>
+                          <input
+                            type="number"
+                            value={newApiConfig.temperature}
+                            onChange={(e) => setNewApiConfig(prev => ({ ...prev, temperature: parseFloat(e.target.value) || 0.7 }))}
+                            min="0"
+                            max="2"
+                            step="0.1"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+
+                        {/* 설명 */}
+                        <div className="md:col-span-2">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            설명 (선택사항)
+                          </label>
+                          <textarea
+                            value={newApiConfig.description}
+                            onChange={(e) => setNewApiConfig(prev => ({ ...prev, description: e.target.value }))}
+                            placeholder="이 API 설정에 대한 설명을 입력하세요"
+                            rows={3}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-6 flex justify-end">
+                        <Button
+                          onClick={handleSaveAPIConfig}
+                          disabled={apiSaving}
+                          className="bg-blue-600 hover:bg-blue-700 text-white"
+                        >
+                          {apiSaving ? (
+                            <>
+                              <LoadingSpinner size="sm" />
+                              <span className="ml-2">저장 중...</span>
+                            </>
+                          ) : (
+                            '💾 API 설정 저장'
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* 기존 API 설정 목록 */}
+                    <div className="bg-white border rounded-lg p-6">
+                      <h3 className="text-lg font-medium text-gray-900 mb-4">
+                        등록된 API 설정 ({apiConfigs.length}개)
+                      </h3>
+
+                      {apiLoading ? (
+                        <div className="flex items-center justify-center py-8">
+                          <LoadingSpinner size="lg" />
+                          <span className="ml-2 text-gray-600">API 설정을 불러오는 중...</span>
+                        </div>
+                      ) : apiConfigs.length === 0 ? (
+                        <div className="text-center py-8">
+                          <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                          </svg>
+                          <h3 className="mt-2 text-sm font-medium text-gray-900">등록된 API 설정이 없습니다</h3>
+                          <p className="mt-1 text-sm text-gray-500">위에서 새 API 설정을 추가해보세요.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          {apiConfigs.map((config) => (
+                            <div
+                              key={config.id}
+                              className={`border rounded-lg p-4 ${
+                                config.isActive ? 'border-green-200 bg-green-50' : 'border-gray-200'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                  <div className="flex items-center space-x-2 mb-2">
+                                    <span className="text-lg font-medium text-gray-900">
+                                      {AI_PROVIDERS[config.provider].name}
+                                    </span>
+                                    <span className="text-sm text-gray-500">
+                                      ({config.model})
+                                    </span>
+                                    {config.isActive && (
+                                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                        활성화
+                                      </span>
+                                    )}
+                                  </div>
+                                  
+                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600 mb-2">
+                                    <div>
+                                      <span className="font-medium">최대 토큰:</span> {config.maxTokens.toLocaleString()}
+                                    </div>
+                                    <div>
+                                      <span className="font-medium">Temperature:</span> {config.temperature}
+                                    </div>
+                                    <div>
+                                      <span className="font-medium">등록일:</span> {config.createdAt.toLocaleDateString()}
+                                    </div>
+                                    <div>
+                                      <span className="font-medium">API 키:</span> ****{config.apiKey.slice(-4)}
+                                    </div>
+                                  </div>
+
+                                  {config.description && (
+                                    <p className="text-sm text-gray-600 mt-2">
+                                      {config.description}
+                                    </p>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center space-x-2 ml-4">
+                                  <Button
+                                    onClick={() => handleToggleAPIConfig(config.id, !config.isActive)}
+                                    className={`text-sm ${
+                                      config.isActive
+                                        ? 'bg-yellow-600 hover:bg-yellow-700 text-white'
+                                        : 'bg-green-600 hover:bg-green-700 text-white'
+                                    }`}
+                                  >
+                                    {config.isActive ? '비활성화' : '활성화'}
+                                  </Button>
+                                  <Button
+                                    onClick={() => handleDeleteAPIConfig(config.id)}
+                                    className="bg-red-600 hover:bg-red-700 text-white text-sm"
+                                  >
+                                    삭제
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>

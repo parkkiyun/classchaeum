@@ -314,4 +314,42 @@ export interface Group {
 
 export interface GroupWithStudents extends Group {
   students: Student[]
+}
+
+// AI API 설정 타입 추가
+export type AIProvider = 'openai' | 'anthropic' | 'google' | 'cohere' | 'custom'
+
+export interface AIModel {
+  id: string
+  name: string
+  provider: AIProvider
+  maxTokens: number
+  supportedFeatures: string[]
+}
+
+export interface APIConfig {
+  id: string
+  provider: AIProvider
+  apiKey: string
+  baseURL: string
+  model: string
+  maxTokens: number
+  temperature: number
+  isActive: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface SchoolAPIConfig extends APIConfig {
+  schoolId: string
+  configuredBy: string // 관리자 ID
+  description?: string
+}
+
+export interface UserAPIPreference {
+  userId: string
+  useSchoolAPI: boolean // true: 학교 공용, false: 개인 API
+  personalAPIConfig?: APIConfig
+  createdAt: Date
+  updatedAt: Date
 } 

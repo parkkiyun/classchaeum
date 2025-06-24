@@ -46,6 +46,7 @@ export const SurveyManagementPage: React.FC = () => {
   const [selectedResponse, setSelectedResponse] = useState<any>(null)
   const [realSurveyResponses, setRealSurveyResponses] = useState<any[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [selectedSurveyId, setSelectedSurveyId] = useState<string>('all')
 
   const reportAreas: ReportArea[] = ['자율', '진로', '행특', '교과', '동아리']
 
@@ -256,6 +257,37 @@ export const SurveyManagementPage: React.FC = () => {
     }
   }
 
+  // 설문 삭제
+  const deleteSurvey = async (surveyId: string, surveyTitle: string) => {
+    const confirmMessage = `"${surveyTitle}" 설문을 삭제하시겠습니까?\n\n⚠️ 삭제하면 응답까지 모두 삭제됩니다.\n이 작업은 되돌릴 수 없습니다.`
+    
+    if (!confirm(confirmMessage)) return
+
+    try {
+      // 설문 응답 먼저 삭제
+      const responsesRef = collection(db, 'surveys', surveyId, 'responses')
+      const responsesSnapshot = await getDocs(responsesRef)
+      
+      const deletePromises = responsesSnapshot.docs.map(responseDoc => 
+        deleteDoc(doc(db, 'surveys', surveyId, 'responses', responseDoc.id))
+      )
+      
+      await Promise.all(deletePromises)
+      
+      // 설문 자체 삭제
+      await deleteDoc(doc(db, 'surveys', surveyId))
+      
+      // 로컬 상태 업데이트
+      setSurveys(prev => prev.filter(survey => survey.id !== surveyId))
+      setRealSurveyResponses(prev => prev.filter(response => response.surveyId !== surveyId))
+      
+      alert('설문이 성공적으로 삭제되었습니다.')
+    } catch (error) {
+      console.error('설문 삭제 실패:', error)
+      alert('설문 삭제 중 오류가 발생했습니다.')
+    }
+  }
+
   // Excel 설문 응답 업로드 처리
   const handleSurveyUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -378,9 +410,12 @@ export const SurveyManagementPage: React.FC = () => {
     }
   }
 
-  // 설문 응답 필터링 (현재는 모든 응답 표시)
+  // 설문 응답 필터링 (설문별)
   const getResponsesByArea = () => {
-    return realSurveyResponses
+    if (selectedSurveyId === 'all') {
+      return realSurveyResponses
+    }
+    return realSurveyResponses.filter(response => response.surveyId === selectedSurveyId)
   }
 
   const filteredResponses = getResponsesByArea()
@@ -499,31 +534,30 @@ export const SurveyManagementPage: React.FC = () => {
                         </div>
                       </div>
                       <div className="flex items-center space-x-2">
-                        <Button
+                        <button
                           onClick={() => copySurveyLink(survey.id)}
-                          className="bg-gray-100 hover:bg-gray-200 text-gray-700"
+                          className="p-2 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="링크 복사"
                         >
-                          🔗 링크 복사
-                        </Button>
-                        <Button
-                          onClick={() => {
-                            const baseUrl = import.meta.env.VITE_APP_URL || window.location.origin
-                            const link = `${baseUrl}/survey/${survey.id}`
-                            window.open(link, '_blank')
-                          }}
-                          className="bg-blue-100 hover:bg-blue-200 text-blue-700"
-                        >
-                          👁️ 미리보기
-                        </Button>
-                        <Button
+                          🔗
+                        </button>
+                        <button
                           onClick={() => toggleSurveyStatus(survey.id, survey.isActive)}
-                          className={survey.isActive 
-                            ? "bg-red-100 hover:bg-red-200 text-red-700"
-                            : "bg-green-100 hover:bg-green-200 text-green-700"
-                          }
+                          className={`p-2 rounded-lg transition-colors ${survey.isActive 
+                            ? "text-red-600 hover:text-red-700 hover:bg-red-50"
+                            : "text-green-600 hover:text-green-700 hover:bg-green-50"
+                          }`}
+                          title={survey.isActive ? '비활성화' : '활성화'}
                         >
-                          {survey.isActive ? '비활성화' : '활성화'}
-                        </Button>
+                          {survey.isActive ? '⏸️' : '▶️'}
+                        </button>
+                        <button
+                          onClick={() => deleteSurvey(survey.id, survey.title)}
+                          className="p-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                          title="삭제"
+                        >
+                          🗑️
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -534,6 +568,28 @@ export const SurveyManagementPage: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-6">
+          {/* 설문 선택 필터 */}
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="flex items-center space-x-4">
+              <label className="text-sm font-medium text-gray-700">설문 선택:</label>
+              <select
+                value={selectedSurveyId}
+                onChange={(e) => setSelectedSurveyId(e.target.value)}
+                className="block w-64 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+              >
+                <option value="all">전체 설문 ({realSurveyResponses.length}개 응답)</option>
+                {surveys.map((survey) => {
+                  const surveyResponseCount = realSurveyResponses.filter(r => r.surveyId === survey.id).length
+                  return (
+                    <option key={survey.id} value={survey.id}>
+                      {survey.title} ({surveyResponseCount}개 응답)
+                    </option>
+                  )
+                })}
+              </select>
+            </div>
+          </div>
+
           {/* 설문 응답 목록 */}
           <div className="bg-white rounded-lg shadow">
             <div className="px-6 py-4 border-b border-gray-200">
@@ -558,6 +614,7 @@ export const SurveyManagementPage: React.FC = () => {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">학생</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">설문</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">상태</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">제출일</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">응답 수</th>
@@ -594,6 +651,14 @@ export const SurveyManagementPage: React.FC = () => {
                                   }
                                 </div>
                               </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm font-medium text-gray-900">
+                              {response.surveyTitle || '설문 제목 없음'}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              ID: {response.surveyId?.substring(0, 8)}...
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
