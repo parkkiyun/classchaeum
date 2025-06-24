@@ -107,9 +107,11 @@ export interface Report {
   id: string
   studentId: string
   teacherId: string
-  area: 'autonomous' | 'career' | 'activity' | 'subject' | 'club'
+  groupId: string
+  area: 'autonomous' | 'career' | 'behavior' | 'subject' | 'club'
   content: string
   version: number
+  surveyResponseId?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -125,6 +127,39 @@ export interface Prompt {
   promptText: string
   temperature: number
   maxTokens: number
+  createdAt: Date
+  updatedAt: Date
+}
+
+// 프롬프트 관련 타입 추가
+export interface AreaPrompt {
+  id: string
+  area: 'autonomous' | 'career' | 'behavior' | 'subject' | 'club'
+  title: string
+  prompt: string
+  isDefault: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface GroupPrompts {
+  id: string
+  groupId: string
+  teacherId: string
+  prompts: {
+    autonomous?: string
+    career?: string
+    behavior?: string
+    subject?: string
+    club?: string
+  }
+  examples?: {
+    autonomous?: string[]
+    career?: string[]
+    behavior?: string[]
+    subject?: string[]
+    club?: string[]
+  }
   createdAt: Date
   updatedAt: Date
 }

@@ -12,8 +12,10 @@ import { AdminPage } from './pages/AdminPage'
 import { SurveysListPage } from './pages/surveys/SurveysListPage'
 import { CreateSurveyPage } from './pages/surveys/CreateSurveyPage'
 import { SurveyResponsePage } from './pages/surveys/SurveyResponsePage'
+
 import { SurveyDetailPage } from './pages/surveys/SurveyDetailPage'
 import { StudentAssignmentPage } from './pages/groups/StudentAssignmentPage'
+import { SettingsPage } from './pages/SettingsPage'
 
 // DashboardPage를 감싸는 컴포넌트
 const DashboardWrapper: React.FC = () => {
@@ -107,6 +109,14 @@ function App() {
                   </Layout>
                 </ProtectedRoute>
               } />
+              <Route path="/settings" element={
+                <ProtectedRoute>
+                  <Layout title="설정" subtitle="개인 설정 관리">
+                    <SettingsPage />
+                  </Layout>
+                </ProtectedRoute>
+              } />
+
               <Route path="/reports" element={<Navigate to="/" replace />} />
               <Route path="/history" element={<Navigate to="/" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />

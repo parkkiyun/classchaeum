@@ -107,7 +107,7 @@ export const GroupDetailPage: React.FC = () => {
       case 'records':
         return <RecordsPage />
       case 'hanolchaeum':
-        return <HanolchaeumPage />
+        return <HanolchaeumPage group={currentGroup} />
       default:
         return <GroupDashboard group={currentGroup} />
     }

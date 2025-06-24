@@ -1,63 +1,311 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
+import { useAuth } from '../../contexts/AuthContext'
+import { useAppStore } from '../../store/appStore'
+import { openaiService, type GenerateRequest } from '../../services/openaiService'
+import { saveRecord, getRecord } from '../../services/recordService'
+import { collection, getDocs, query, where } from 'firebase/firestore'
+import { db } from '../../lib/firebase'
+import type { Group, Student, SurveyResponse } from '../../types'
+import type { SurveyResponse as WebSurveyResponse } from '../../types/survey'
 
-export const HanolchaeumPage: React.FC = () => {
-  return (
-    <div className="space-y-6">
+// 단계별 컴포넌트 import
+import { Step0AreaSelection } from './record-steps/Step0AreaSelection'
+import { Step1StudentSelection } from './record-steps/Step1StudentSelection'
+import { Step2RecordEditing } from './record-steps/Step2RecordEditing'
+import { Step3Completion } from './record-steps/Step3Completion'
+import { GroupPromptSettingsPage } from './GroupPromptSettingsPage'
+
+type StepType = 0 | 1 | 2 | 3 | 'settings'
+
+interface RecordData {
+  area: GenerateRequest['area']
+  student: Student
+  surveyResponse: SurveyResponse
+  aiContent: string
+}
+
+interface HanolchaeumPageProps {
+  group: Group
+}
+
+export const HanolchaeumPage: React.FC<HanolchaeumPageProps> = ({ group }) => {
+  const { teacher } = useAuth()
+  const { students, surveyResponses } = useAppStore()
+
+  // 현재 단계
+  const [currentStep, setCurrentStep] = useState<StepType>(0)
+
+  // 단계별 데이터
+  const [selectedArea, setSelectedArea] = useState<GenerateRequest['area'] | ''>('')
+  const [recordData, setRecordData] = useState<RecordData | null>(null)
+
+  // 웹 설문 응답 데이터
+  const [webSurveyResponses, setWebSurveyResponses] = useState<SurveyResponse[]>([])
+  const [loading, setLoading] = useState(false)
+
+  // 현재 클래스의 학생 목록
+  const groupStudents = group 
+    ? students.filter(student => group.studentIds.includes(student.id))
+    : []
+
+  // 통합된 설문 응답 (기존 + 웹)
+  const allSurveyResponses = [...surveyResponses, ...webSurveyResponses]
+
+  // 웹 설문 응답 로드
+  useEffect(() => {
+    const loadWebSurveyResponses = async () => {
+      if (!group || !teacher) return
+
+      try {
+        setLoading(true)
+        
+        // 해당 클래스의 설문 조회
+        const surveysRef = collection(db, 'surveys')
+        const surveysQuery = query(surveysRef, where('groupId', '==', group.id))
+        const surveysSnapshot = await getDocs(surveysQuery)
+        
+        const webResponses: SurveyResponse[] = []
+        
+        // 각 설문의 응답 조회
+        for (const surveyDoc of surveysSnapshot.docs) {
+          const surveyId = surveyDoc.id
+          const surveyData = surveyDoc.data()
+          const responsesRef = collection(db, 'surveys', surveyId, 'responses')
+          const responsesSnapshot = await getDocs(responsesRef)
+          
+          responsesSnapshot.forEach((responseDoc) => {
+            const responseData = responseDoc.data() as WebSurveyResponse
+            
+            // 학생 이름으로 학생 ID 찾기
+            const student = groupStudents.find(s => 
+              s.name === responseData.studentName || 
+              s.email === responseData.email
+            )
+            
+            if (student) {
+              // 설문 질문 정보 매핑
+              const questionMap = new Map()
+              if (surveyData.questions) {
+                surveyData.questions.forEach((q: any) => {
+                  questionMap.set(q.id, q.question)
+                })
+              }
+              
+              // 웹 설문 응답을 기존 형식으로 변환
+              const convertedResponse: SurveyResponse = {
+                id: responseDoc.id,
+                templateId: surveyData.title,
+                groupId: group.id,
+                studentId: student.id,
+                teacherId: teacher.uid,
+                responses: Object.entries(responseData.answers).map(([questionId, answer]) => ({
+                  questionId,
+                  answer: Array.isArray(answer) ? answer.join(', ') : answer,
+                  textAnswer: questionMap.get(questionId) || `질문 ${questionId}`
+                })),
+                status: 'submitted',
+                submittedAt: responseData.submittedAt,
+                createdAt: responseData.submittedAt,
+                updatedAt: responseData.updatedAt
+              }
+              
+              webResponses.push(convertedResponse)
+            }
+          })
+        }
+        
+        setWebSurveyResponses(webResponses)
+        
+      } catch (error) {
+        console.error('❌ 웹 설문 응답 로드 실패:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadWebSurveyResponses()
+  }, [group, teacher, groupStudents])
+
+  // 0단계 -> 1단계
+  const handleAreaNext = () => {
+    setCurrentStep(1)
+  }
+
+  // 1단계 -> 0단계 (뒤로가기)
+  const handleStudentBack = () => {
+    setCurrentStep(0)
+  }
+
+  // 1단계 -> 2단계 (AI 생성 완료)
+  const handleStudentNext = (data: {
+    student: Student
+    surveyResponse: SurveyResponse
+    aiContent: string
+  }) => {
+    setRecordData({
+      area: selectedArea as GenerateRequest['area'],
+      student: data.student,
+      surveyResponse: data.surveyResponse,
+      aiContent: data.aiContent
+    })
+    setCurrentStep(2)
+  }
+
+  // 2단계 -> 1단계 (뒤로가기)
+  const handleRecordBack = () => {
+    setCurrentStep(1)
+  }
+
+  // 2단계 -> 3단계 (작성 완료)
+  const handleRecordNext = () => {
+    setCurrentStep(3)
+  }
+
+  // 기록 저장 함수
+  const handleSave = async (content: string) => {
+    if (!recordData || !teacher || !group) return
+
+    try {
+      await saveRecord({
+        studentId: recordData.student.id,
+        teacherId: teacher.uid,
+        groupId: group.id,
+        area: recordData.area,
+        content: content,
+        surveyResponseId: recordData.surveyResponse.id
+      })
+      
+      console.log('✅ 기록 저장 완료')
+    } catch (error) {
+      console.error('❌ 기록 저장 실패:', error)
+      throw error
+    }
+  }
+
+  // 3단계 -> 1단계 (같은 영역, 다른 학생)
+  const handleContinueWithSameArea = () => {
+    setRecordData(null)
+    setCurrentStep(1)
+  }
+
+  // 3단계 -> 0단계 (다른 영역)
+  const handleContinueWithDifferentArea = () => {
+    setSelectedArea('')
+    setRecordData(null)
+    setCurrentStep(0)
+  }
+
+  // 설정 페이지로 이동
+  const handleGoToSettings = () => {
+    setCurrentStep('settings')
+  }
+
+  // 설정에서 돌아가기
+  const handleBackFromSettings = () => {
+    setCurrentStep(0)
+  }
+
+  // 기존 기록 불러오기
+  const getExistingRecord = async (studentId: string, area: GenerateRequest['area']): Promise<string | undefined> => {
+    if (!teacher) return undefined
+
+    try {
+      const record = await getRecord({
+        studentId,
+        teacherId: teacher.uid,
+        area
+      })
+      
+      return record?.content
+    } catch (error) {
+      console.error('❌ 기존 기록 조회 실패:', error)
+      return undefined
+    }
+  }
+
+  if (!group) {
+    return (
       <div className="text-center py-12">
-        <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-blue-100">
-          <svg className="h-8 w-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-          </svg>
-        </div>
-        <h3 className="mt-2 text-lg font-medium text-gray-900">클래스채움 AI 생성</h3>
-        <p className="mt-1 text-sm text-gray-500">
-          AI를 활용한 생활기록부 자동 생성 기능입니다.<br/>
-          곧 출시될 예정입니다.
-        </p>
-        
-        <div className="mt-8 max-w-md mx-auto">
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <div className="flex">
-              <div className="flex-shrink-0">
-                <svg className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                </svg>
-              </div>
-              <div className="ml-3">
-                <h3 className="text-sm font-medium text-yellow-800">개발 중</h3>
-                <div className="mt-2 text-sm text-yellow-700">
-                  <p>
-                    AI 생활기록부 생성 기능은 현재 개발 중입니다.<br/>
-                    설문 데이터를 기반으로 자동화된 생활기록부 문항을 생성할 예정입니다.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div className="mt-8">
-          <h4 className="text-sm font-medium text-gray-900 mb-4">예정된 기능</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h5 className="font-medium text-gray-900 mb-2">🤖 AI 텍스트 생성</h5>
-              <p className="text-sm text-gray-600">설문 응답을 바탕으로 생활기록부 문항을 자동 생성</p>
-            </div>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h5 className="font-medium text-gray-900 mb-2">✏️ 실시간 편집</h5>
-              <p className="text-sm text-gray-600">생성된 텍스트를 실시간으로 수정하고 개선</p>
-            </div>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h5 className="font-medium text-gray-900 mb-2">📚 버전 관리</h5>
-              <p className="text-sm text-gray-600">수정 이력을 추적하고 이전 버전과 비교</p>
-            </div>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h5 className="font-medium text-gray-900 mb-2">📄 일괄 출력</h5>
-              <p className="text-sm text-gray-600">완성된 생활기록부를 PDF로 일괄 출력</p>
-            </div>
-          </div>
-        </div>
+        <p className="text-gray-500">클래스 정보를 불러오는 중...</p>
       </div>
-    </div>
-  )
+    )
+  }
+
+  // 단계별 렌더링
+  switch (currentStep) {
+    case 0:
+      return (
+        <Step0AreaSelection
+          selectedArea={selectedArea}
+          onAreaSelect={setSelectedArea}
+          onNext={handleAreaNext}
+          onGoToSettings={handleGoToSettings}
+          groupName={group.name}
+          groupType={group.type}
+        />
+      )
+
+    case 1:
+      if (!selectedArea) {
+        setCurrentStep(0)
+        return null
+      }
+      return (
+        <Step1StudentSelection
+          selectedArea={selectedArea}
+          students={groupStudents}
+          surveyResponses={allSurveyResponses}
+          onBack={handleStudentBack}
+          onNext={handleStudentNext}
+          groupName={group.name}
+          groupId={group.id}
+          teacherId={teacher?.uid}
+        />
+      )
+
+    case 2:
+      if (!recordData) {
+        setCurrentStep(1)
+        return null
+      }
+      return (
+        <Step2RecordEditing
+          selectedArea={recordData.area}
+          student={recordData.student}
+          surveyResponse={recordData.surveyResponse}
+          aiContent={recordData.aiContent}
+          onBack={handleRecordBack}
+          onNext={handleRecordNext}
+          onSave={handleSave}
+          groupName={group.name}
+          getExistingRecord={getExistingRecord}
+        />
+      )
+
+    case 3:
+      if (!recordData) {
+        setCurrentStep(0)
+        return null
+      }
+      return (
+        <Step3Completion
+          selectedArea={recordData.area}
+          student={recordData.student}
+          onContinueWithSameArea={handleContinueWithSameArea}
+          onContinueWithDifferentArea={handleContinueWithDifferentArea}
+          groupName={group.name}
+        />
+      )
+
+    case 'settings':
+      return (
+        <GroupPromptSettingsPage
+          group={group}
+          onBack={handleBackFromSettings}
+        />
+      )
+
+    default:
+      return null
+  }
 } 
