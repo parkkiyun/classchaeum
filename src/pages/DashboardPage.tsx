@@ -128,9 +128,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   )
 
   const tabs: Tab[] = [
-    { id: 'my-classes', name: '내 클래스', icon: '🏠', count: myGroups.length },
-    { id: 'recent', name: '최근 활동', icon: '🕒', count: 0 },
-    { id: 'favorites', name: '즐겨찾기', icon: '⭐', count: 0 }
+    { id: 'my-classes', name: '내 클래스', count: myGroups.length },
+    { id: 'recent', name: '최근 활동', count: 0 },
+    { id: 'favorites', name: '즐겨찾기', count: 0 }
   ]
 
   // 클래스 타입별 아이콘 및 색상
