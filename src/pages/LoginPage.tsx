@@ -1,8 +1,10 @@
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { LoadingSpinner } from '../components/ui/LoadingSpinner'
 
 export const LoginPage: React.FC = () => {
+  const navigate = useNavigate()
   const [isLogin, setIsLogin] = useState(true) // true: 로그인, false: 회원가입
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -22,6 +24,8 @@ export const LoginPage: React.FC = () => {
     try {
       if (isLogin) {
         await login(email, password)
+        // 로그인 성공 시 대시보드로 이동
+        navigate('/')
       } else {
         if (!name.trim()) {
           throw new Error('이름을 입력해주세요.')
@@ -33,6 +37,7 @@ export const LoginPage: React.FC = () => {
         setTimeout(async () => {
           try {
             await login(email, password)
+            navigate('/')
           } catch (loginError) {
             console.log('자동 로그인 실패, 수동 로그인 필요')
             setIsLogin(true)

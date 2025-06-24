@@ -7,7 +7,7 @@ import { useAppStore } from '../store/appStore'
 import type { Group, GroupType } from '../types'
 import { LoadingSpinner } from '../components/ui/LoadingSpinner'
 import { Button } from '../components/ui/Button'
-// import { TopNavigation } from '../components/TopNavigation'
+import { TabNavigation, type Tab } from '../components/ui/TabNavigation'
 
 interface DashboardPageProps {
   searchTerm?: string
@@ -32,7 +32,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [activeTab, setActiveTab] = useState<'my-classes' | 'recent' | 'favorites'>('my-classes')
+  const [activeTab, setActiveTab] = useState<string>('my-classes')
   
   // 클래스 생성 폼 상태
   const [classForm, setClassForm] = useState({
@@ -127,10 +127,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     (group.description || '').toLowerCase().includes(searchTerm.toLowerCase())
   )
 
-  const tabs = [
-    { id: 'my-classes' as const, name: '내 클래스', count: myGroups.length },
-    { id: 'recent' as const, name: '최근 활동', count: 0 },
-    { id: 'favorites' as const, name: '즐겨찾기', count: 0 }
+  const tabs: Tab[] = [
+    { id: 'my-classes', name: '내 클래스', icon: '🏠', count: myGroups.length },
+    { id: 'recent', name: '최근 활동', icon: '🕒', count: 0 },
+    { id: 'favorites', name: '즐겨찾기', icon: '⭐', count: 0 }
   ]
 
   // 클래스 타입별 아이콘 및 색상
@@ -179,28 +179,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       {/* 메인 콘텐츠 */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* 탭 네비게이션 */}
-        <div className="flex space-x-1 bg-gray-100 rounded-lg p-1 mb-8 w-fit">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-6 py-2 rounded-md text-sm font-medium transition-colors ${
-                activeTab === tab.id
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              {tab.name}
-              {tab.count > 0 && (
-                <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${
-                  activeTab === tab.id ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600'
-                }`}>
-                  {tab.count}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
+        <TabNavigation
+          tabs={tabs}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          className="mb-8"
+        />
 
         {/* 클래스 그리드 */}
         {activeTab === 'my-classes' && (

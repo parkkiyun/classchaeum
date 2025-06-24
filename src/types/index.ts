@@ -35,12 +35,12 @@ export interface Class {
 export interface Student {
   id: string
   name: string
+  email?: string
   grade: number
   class: number
   number: number
   birthdate?: string
   gender?: 'M' | 'F'
-  subjects?: string[]
   createdAt: Date
   updatedAt: Date
 }
@@ -153,12 +153,12 @@ export interface AIGenerationResponse {
 export interface ExcelStudent {
   StudentID: string
   Name: string
+  Email?: string
   Grade: number
   Class: number
   Number: number
   Birthdate?: string
   Gender?: 'M' | 'F'
-  Subjects?: string
 }
 
 export interface ExcelSurveyData {

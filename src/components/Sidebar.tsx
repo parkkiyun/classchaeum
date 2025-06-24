@@ -47,24 +47,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       active: location.pathname === '/' || location.pathname === '/dashboard'
     },
     {
-      icon: Users,
-      label: '학생 관리',
-      path: '/students',
-      active: location.pathname.startsWith('/students')
-    },
-    {
-      icon: FileText,
-      label: '클래스 관리',
-      path: '/groups',
-      active: location.pathname.startsWith('/groups')
-    },
-    {
-      icon: BarChart3,
-      label: '통계',
-      path: '/statistics',
-      active: location.pathname.startsWith('/statistics')
-    },
-    {
       icon: Settings,
       label: '설정',
       path: '/settings',

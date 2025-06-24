@@ -11,12 +11,12 @@ import { Button } from '../components/ui/Button'
 interface ExcelRow {
   StudentID?: string
   Name?: string
+  Email?: string
   Grade?: number
   Class?: number
   Number?: number
   Birthdate?: string
   Gender?: string
-  Subjects?: string
 }
 
 export const StudentsPage: React.FC = () => {
@@ -125,12 +125,12 @@ export const StudentsPage: React.FC = () => {
         const student: Student = {
           id: row.StudentID,
           name: row.Name,
+          email: row.Email,
           grade: Number(row.Grade),
           class: Number(row.Class),
           number: Number(row.Number),
           birthdate: row.Birthdate,
           gender: row.Gender as 'M' | 'F',
-          subjects: row.Subjects ? row.Subjects.split(',').map(s => s.trim()) : [],
           createdAt: new Date(),
           updatedAt: new Date()
         }
@@ -186,22 +186,22 @@ export const StudentsPage: React.FC = () => {
       {
         StudentID: '2025-1-3-01',
         Name: '김철수',
+        Email: 'kimcheolsu@school.edu',
         Grade: 1,
         Class: 3,
         Number: 1,
         Birthdate: '2008-03-15',
-        Gender: 'M',
-        Subjects: '국어,수학,영어'
+        Gender: 'M'
       },
       {
         StudentID: '2025-1-3-02',
         Name: '이영희',
+        Email: 'leeyounghee@school.edu',
         Grade: 1,
         Class: 3,
         Number: 2,
         Birthdate: '2008-05-22',
-        Gender: 'F',
-        Subjects: '국어,수학,과학'
+        Gender: 'F'
       }
     ]
 
@@ -377,10 +377,10 @@ export const StudentsPage: React.FC = () => {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">학생 정보</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">이메일</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">학년/반/번호</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">생년월일</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">성별</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">담당 과목</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -402,6 +402,9 @@ export const StudentsPage: React.FC = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {student.email || '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {student.grade}학년 {student.class}반 {student.number}번
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
@@ -409,18 +412,6 @@ export const StudentsPage: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {student.gender === 'M' ? '남' : student.gender === 'F' ? '여' : '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        <div className="flex flex-wrap gap-1">
-                          {student.subjects?.map((subject, index) => (
-                            <span
-                              key={index}
-                              className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
-                            >
-                              {subject}
-                            </span>
-                          )) || '-'}
-                        </div>
                       </td>
                     </tr>
                   ))}

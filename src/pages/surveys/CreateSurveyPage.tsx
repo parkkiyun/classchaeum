@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useState, useEffect } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useAppStore } from '../../store/appStore'
 import { createSurvey } from '../../services/surveyService'
@@ -10,6 +10,7 @@ import { Plus, Trash2, Copy } from 'lucide-react'
 
 export const CreateSurveyPage: React.FC = () => {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { teacher } = useAuth()
   const { getGroupsByTeacher } = useAppStore()
   
@@ -19,6 +20,14 @@ export const CreateSurveyPage: React.FC = () => {
     description: '',
     groupId: ''
   })
+
+  // URL에서 groupId 파라미터 읽어서 기본값으로 설정
+  useEffect(() => {
+    const groupIdParam = searchParams.get('groupId')
+    if (groupIdParam) {
+      setFormData(prev => ({ ...prev, groupId: groupIdParam }))
+    }
+  }, [searchParams])
   
   const [questions, setQuestions] = useState<SurveyQuestion[]>([
     {
@@ -89,7 +98,7 @@ export const CreateSurveyPage: React.FC = () => {
     }
 
     if (!formData.groupId) {
-      alert('클래스를 선택해주세요.')
+      alert('클래스 정보가 없습니다. 클래스 페이지에서 다시 시도해주세요.')
       return
     }
 
@@ -123,7 +132,13 @@ export const CreateSurveyPage: React.FC = () => {
       )
 
       alert('설문이 성공적으로 생성되었습니다!')
-      navigate(`/surveys/${surveyId}`)
+      // 특정 그룹에서 온 경우 그룹 페이지로, 아니면 설문 목록으로
+      const groupIdParam = searchParams.get('groupId')
+      if (groupIdParam) {
+        navigate(`/groups/${groupIdParam}#surveys`)
+      } else {
+        navigate('/surveys')
+      }
     } catch (error) {
       console.error('설문 생성 실패:', error)
       alert('설문 생성 중 오류가 발생했습니다.')
@@ -265,7 +280,7 @@ export const CreateSurveyPage: React.FC = () => {
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-6">기본 정보</h2>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 설문 제목 *
@@ -278,25 +293,6 @@ export const CreateSurveyPage: React.FC = () => {
                 placeholder="예: 중간고사 피드백 설문"
                 required
               />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                대상 클래스 *
-              </label>
-              <select
-                value={formData.groupId}
-                onChange={(e) => setFormData(prev => ({ ...prev, groupId: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                required
-              >
-                <option value="">클래스를 선택하세요</option>
-                {myGroups.map(group => (
-                  <option key={group.id} value={group.id}>
-                    {group.name} ({group.type})
-                  </option>
-                ))}
-              </select>
             </div>
           </div>
 
@@ -337,7 +333,14 @@ export const CreateSurveyPage: React.FC = () => {
         <div className="flex justify-end space-x-4">
           <Button
             type="button"
-            onClick={() => navigate('/surveys')}
+            onClick={() => {
+              const groupIdParam = searchParams.get('groupId')
+              if (groupIdParam) {
+                navigate(`/groups/${groupIdParam}#surveys`)
+              } else {
+                navigate('/surveys')
+              }
+            }}
             className="bg-gray-100 hover:bg-gray-200 text-gray-700"
           >
             취소

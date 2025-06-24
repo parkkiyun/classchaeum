@@ -4,8 +4,8 @@ import { db } from '../../lib/firebase'
 import { useAuth } from '../../contexts/AuthContext'
 import { useAppStore } from '../../store/appStore'
 import { useParams } from 'react-router-dom'
-import type { SurveyResponse, ReportArea } from '../../types'
-import type { Survey, SurveyQuestion } from '../../types/survey'
+import type { SurveyResponse as LegacySurveyResponse, ReportArea } from '../../types'
+import type { Survey, SurveyQuestion, SurveyResponse } from '../../types/survey'
 import * as XLSX from 'xlsx'
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner'
 import { Button } from '../../components/ui/Button'
@@ -38,22 +38,13 @@ export const SurveyManagementPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('surveys')
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
-  const [selectedArea, setSelectedArea] = useState<ReportArea>('자율')
   const [uploadResult, setUploadResult] = useState<{
     success: number
     errors: string[]
   } | null>(null)
   const [surveys, setSurveys] = useState<Survey[]>([])
-  const [showCreateForm, setShowCreateForm] = useState(false)
-  const [newSurvey, setNewSurvey] = useState<{
-    title: string
-    description?: string
-    questions: SurveyQuestion[]
-  }>({
-    title: '',
-    description: '',
-    questions: []
-  })
+  const [selectedResponse, setSelectedResponse] = useState<any>(null)
+  const [realSurveyResponses, setRealSurveyResponses] = useState<any[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const reportAreas: ReportArea[] = ['자율', '진로', '행특', '교과', '동아리']
@@ -122,24 +113,34 @@ export const SurveyManagementPage: React.FC = () => {
 
     try {
       setLoading(true)
-      const responsesRef = collection(db, 'surveyResponses')
-      const responsesSnapshot = await getDocs(responsesRef)
-      const loadedResponses: SurveyResponse[] = []
+      const allResponses: any[] = []
       
-      responsesSnapshot.forEach((doc) => {
-        const data = doc.data()
-        loadedResponses.push({
-          id: doc.id,
-          ...data,
-          createdAt: data.createdAt?.toDate() || new Date(),
-          updatedAt: data.updatedAt?.toDate() || new Date(),
-          submittedAt: data.submittedAt?.toDate(),
-          reviewedAt: data.reviewedAt?.toDate()
-        } as SurveyResponse)
-      })
+      // 각 설문에 대해 응답 조회
+      for (const survey of surveys) {
+        try {
+          const responsesRef = collection(db, 'surveys', survey.id, 'responses')
+          const responsesSnapshot = await getDocs(responsesRef)
+          
+          responsesSnapshot.forEach((doc) => {
+            const data = doc.data()
+            allResponses.push({
+              id: doc.id,
+              surveyId: survey.id,
+              surveyTitle: survey.title,
+              ...data,
+              submittedAt: data.submittedAt?.toDate() || new Date(),
+              updatedAt: data.updatedAt?.toDate() || new Date()
+            })
+          })
+          
+          console.log(`설문 "${survey.title}" 응답 수:`, responsesSnapshot.size)
+        } catch (error) {
+          console.error(`설문 ${survey.id} 응답 로드 실패:`, error)
+        }
+      }
       
-      setSurveyResponses(loadedResponses)
-      console.log('설문 응답 로드 완료:', loadedResponses.length, '개')
+      setRealSurveyResponses(allResponses)
+      console.log('전체 설문 응답 로드 완료:', allResponses.length, '개')
     } catch (error) {
       console.error('설문 응답 로드 실패:', error)
     } finally {
@@ -149,81 +150,41 @@ export const SurveyManagementPage: React.FC = () => {
 
   useEffect(() => {
     loadSurveys()
-    loadSurveyResponses()
   }, [teacher, groupId])
 
-  // 설문 생성
-  const handleCreateSurvey = async () => {
-    if (!teacher || !groupId || !newSurvey.title || !newSurvey.questions?.length) {
-      alert('설문 제목과 최소 1개의 질문을 입력해주세요.')
-      return
+  // 설문 목록이 로드된 후 응답 로드
+  useEffect(() => {
+    if (surveys.length > 0) {
+      loadSurveyResponses()
     }
+  }, [surveys])
 
-    try {
-      const surveyData: Omit<Survey, 'id'> = {
-        title: newSurvey.title,
-        description: newSurvey.description || '',
-        teacherId: teacher.uid,
-        groupId: groupId,
-        questions: newSurvey.questions,
-        isActive: true,
-        allowEdit: true,
-        createdAt: new Date(),
-        updatedAt: new Date()
+  // 페이지가 포커스되었을 때 데이터 새로고침 (설문 생성 후 돌아왔을 때)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && teacher && groupId) {
+        console.log('페이지 포커스 - 설문 목록 새로고침')
+        loadSurveys()
       }
+    }
 
-      const surveysRef = collection(db, 'surveys')
-      const docRef = await addDoc(surveysRef, surveyData)
-      
-      const createdSurvey: Survey = {
-        id: docRef.id,
-        ...surveyData
+    const handleFocus = () => {
+      if (teacher && groupId) {
+        console.log('윈도우 포커스 - 설문 목록 새로고침')
+        loadSurveys()
       }
-
-      setSurveys(prev => [createdSurvey, ...prev])
-      setShowCreateForm(false)
-      setNewSurvey({ title: '', description: '', questions: [] })
-      
-      alert('설문이 성공적으로 생성되었습니다!')
-    } catch (error) {
-      console.error('설문 생성 실패:', error)
-      alert('설문 생성에 실패했습니다.')
     }
-  }
 
-  // 질문 추가
-  const addQuestion = () => {
-    const newQuestion: SurveyQuestion = {
-      id: uuidv4(),
-      type: 'short',
-      question: '',
-      required: false,
-      options: []
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleFocus)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleFocus)
     }
-    
-    setNewSurvey(prev => ({
-      ...prev,
-      questions: [...prev.questions, newQuestion]
-    }))
-  }
+  }, [teacher, groupId])
 
-  // 질문 수정
-  const updateQuestion = (questionId: string, updates: Partial<SurveyQuestion>) => {
-    setNewSurvey(prev => ({
-      ...prev,
-      questions: prev.questions.map(q => 
-        q.id === questionId ? { ...q, ...updates } : q
-      )
-    }))
-  }
 
-  // 질문 삭제
-  const removeQuestion = (questionId: string) => {
-    setNewSurvey(prev => ({
-      ...prev,
-      questions: prev.questions.filter(q => q.id !== questionId)
-    }))
-  }
 
   // 설문 링크 복사
   const copySurveyLink = async (surveyId: string) => {
@@ -417,56 +378,12 @@ export const SurveyManagementPage: React.FC = () => {
     }
   }
 
-  // 설문 응답 템플릿 다운로드
-  const downloadSurveyTemplate = () => {
-    const templateData = students.slice(0, 3).flatMap(student => [
-      {
-        StudentID: student.id,
-        StudentName: student.name,
-        Grade: student.grade,
-        Class: student.class,
-        Number: student.number,
-        Area: selectedArea,
-        Question: `${selectedArea} 활동에서 가장 인상 깊었던 경험은 무엇인가요?`,
-        Answer: '여기에 학생의 응답을 입력하세요'
-      },
-      {
-        StudentID: student.id,
-        StudentName: student.name,
-        Grade: student.grade,
-        Class: student.class,
-        Number: student.number,
-        Area: selectedArea,
-        Question: `${selectedArea} 활동을 통해 배운 점이나 성장한 부분을 서술해주세요.`,
-        Answer: '여기에 학생의 응답을 입력하세요'
-      },
-      {
-        StudentID: student.id,
-        StudentName: student.name,
-        Grade: student.grade,
-        Class: student.class,
-        Number: student.number,
-        Area: selectedArea,
-        Question: `${selectedArea} 활동에 대한 만족도를 평가해주세요.`,
-        Answer: '5점 (매우 만족)'
-      }
-    ])
-
-    const ws = XLSX.utils.json_to_sheet(templateData)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Survey')
-    XLSX.writeFile(wb, `${selectedArea}_설문응답_템플릿.xlsx`)
+  // 설문 응답 필터링 (현재는 모든 응답 표시)
+  const getResponsesByArea = () => {
+    return realSurveyResponses
   }
 
-  // 영역별 설문 응답 필터링
-  const getResponsesByArea = (area: ReportArea) => {
-    return surveyResponses.filter(response => {
-      // 임시로 응답에서 영역 정보를 추출하거나 기본값 사용
-      return true // 모든 응답 표시 (영역별 필터링은 향후 개선)
-    })
-  }
-
-  const filteredResponses = getResponsesByArea(selectedArea)
+  const filteredResponses = getResponsesByArea()
 
   if (loading) {
     return (
@@ -531,7 +448,7 @@ export const SurveyManagementPage: React.FC = () => {
           {/* 설문 생성 버튼 */}
           <div className="flex justify-end">
             <Button
-              onClick={() => setShowCreateForm(true)}
+              onClick={() => window.location.href = `/surveys/create?groupId=${groupId}`}
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
               ➕ 새 설문 만들기
@@ -550,7 +467,7 @@ export const SurveyManagementPage: React.FC = () => {
                   새 설문을 만들어 학생들의 의견을 수집해보세요.
                 </p>
                 <Button
-                  onClick={() => setShowCreateForm(true)}
+                  onClick={() => window.location.href = `/surveys/create?groupId=${groupId}`}
                   className="mt-4 bg-blue-600 hover:bg-blue-700 text-white"
                 >
                   첫 설문 만들기
@@ -617,135 +534,11 @@ export const SurveyManagementPage: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-6">
-          {/* 영역 선택 탭 */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">생활기록부 영역</h3>
-            <div className="flex flex-wrap gap-2">
-              {reportAreas.map((area) => (
-                <button
-                  key={area}
-                  onClick={() => setSelectedArea(area)}
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                    selectedArea === area
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {area}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Excel 업로드 섹션 */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">📊 설문 응답 업로드</h3>
-            
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Excel 업로드 */}
-              <div className="space-y-4">
-                <div className="p-4 bg-blue-50 rounded-lg">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h4 className="font-medium text-blue-900">1. Excel 파일 업로드</h4>
-                      <p className="text-sm text-blue-700 mt-1">학생들의 설문 응답이 담긴 Excel 파일을 업로드하세요</p>
-                    </div>
-                    <Button
-                      onClick={downloadSurveyTemplate}
-                      className="bg-blue-600 hover:bg-blue-700 text-white"
-                    >
-                      📥 템플릿 다운로드
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="p-4 bg-green-50 rounded-lg">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h4 className="font-medium text-green-900">2. 파일 업로드</h4>
-                      <p className="text-sm text-green-700 mt-1">작성된 Excel 파일을 업로드하세요</p>
-                    </div>
-                    <div>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept=".xlsx,.xls"
-                        onChange={handleSurveyUpload}
-                        className="hidden"
-                        disabled={uploading}
-                      />
-                      <Button
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploading}
-                        className="bg-green-600 hover:bg-green-700 text-white"
-                      >
-                        {uploading ? (
-                          <>
-                            <LoadingSpinner size="sm" />
-                            <span className="ml-2">업로드 중...</span>
-                          </>
-                        ) : (
-                          '📤 파일 업로드'
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <div className="flex items-start">
-                  <svg className="w-5 h-5 text-yellow-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                  </svg>
-                  <div>
-                    <h5 className="text-sm font-medium text-yellow-800">Excel 파일 형식</h5>
-                    <p className="text-sm text-yellow-700 mt-1">
-                      StudentID, StudentName, Question, Answer 컬럼이 필요합니다.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 업로드 결과 */}
-            {uploadResult && (
-              <div className="mt-6 p-4 rounded-lg border">
-                <h4 className="font-medium mb-2">업로드 결과</h4>
-                <div className="space-y-2">
-                  {uploadResult.success > 0 && (
-                    <div className="flex items-center text-green-700">
-                      <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                      성공: {uploadResult.success}개의 설문 응답이 업로드되었습니다
-                    </div>
-                  )}
-                  {uploadResult.errors.length > 0 && (
-                    <div className="text-red-700">
-                      <div className="flex items-center mb-1">
-                        <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                        </svg>
-                        오류 {uploadResult.errors.length}개:
-                      </div>
-                      <ul className="list-disc list-inside text-sm space-y-1">
-                        {uploadResult.errors.map((error, index) => (
-                          <li key={index}>{error}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
           {/* 설문 응답 목록 */}
           <div className="bg-white rounded-lg shadow">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">
-                {selectedArea} 설문 응답 목록 ({filteredResponses.length}개)
+                설문 응답 목록 ({filteredResponses.length}개)
               </h3>
             </div>
             
@@ -773,7 +566,10 @@ export const SurveyManagementPage: React.FC = () => {
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {filteredResponses.map((response) => {
-                      const student = students.find(s => s.id === response.studentId)
+                      // 이름으로 학생 정보 찾기
+                      const student = students.find(s => s.name === response.studentName)
+                      const answerCount = response.answers ? Object.keys(response.answers).length : 0
+                      
                       return (
                         <tr key={response.id} className="hover:bg-gray-50">
                           <td className="px-6 py-4 whitespace-nowrap">
@@ -781,40 +577,41 @@ export const SurveyManagementPage: React.FC = () => {
                               <div className="flex-shrink-0 h-8 w-8">
                                 <div className="h-8 w-8 bg-gray-300 rounded-full flex items-center justify-center">
                                   <span className="text-xs font-medium text-gray-700">
-                                    {student?.name.charAt(0) || '?'}
+                                    {(response.studentName || '?').charAt(0)}
                                   </span>
                                 </div>
                               </div>
                               <div className="ml-3">
                                 <div className="text-sm font-medium text-gray-900">
-                                  {student?.name || '알 수 없음'}
+                                  {response.studentName || '이름 없음'}
                                 </div>
                                 <div className="text-sm text-gray-500">
-                                  {student?.grade}학년 {student?.class}반 {student?.number}번
+                                  {student ? 
+                                    `${student.grade}학년 ${student.class}반 ${student.number}번` :
+                                    response.grade && response.classNumber && response.studentNumber ?
+                                    `${response.grade}학년 ${response.classNumber}반 ${response.studentNumber}번` :
+                                    response.email
+                                  }
                                 </div>
                               </div>
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                              response.status === 'submitted' 
-                                ? 'bg-green-100 text-green-800'
-                                : response.status === 'reviewed'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-yellow-100 text-yellow-800'
-                            }`}>
-                              {response.status === 'submitted' ? '제출됨' :
-                               response.status === 'reviewed' ? '검토됨' : '임시저장'}
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              제출됨
                             </span>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                             {response.submittedAt?.toLocaleDateString() || '-'}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {response.responses?.length || 0}개
+                            {answerCount}개
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                            <button className="text-blue-600 hover:text-blue-900 mr-3">
+                            <button 
+                              onClick={() => setSelectedResponse(response)}
+                              className="text-blue-600 hover:text-blue-900 mr-3"
+                            >
                               보기
                             </button>
                             <button className="text-red-600 hover:text-red-900">
@@ -832,15 +629,20 @@ export const SurveyManagementPage: React.FC = () => {
         </div>
       )}
 
-      {/* 설문 생성 모달 */}
-      {showCreateForm && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-20 mx-auto p-5 border w-11/12 max-w-4xl shadow-lg rounded-md bg-white">
-            <div className="mt-3">
+      {/* 설문 응답 상세보기 모달 */}
+      {selectedResponse && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
               <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-medium text-gray-900">새 설문 만들기</h3>
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">설문 응답 상세</h2>
+                  <p className="text-sm text-gray-600 mt-1">
+                    {selectedResponse.studentName} • {selectedResponse.submittedAt?.toLocaleDateString()}
+                  </p>
+                </div>
                 <button
-                  onClick={() => setShowCreateForm(false)}
+                  onClick={() => setSelectedResponse(null)}
                   className="text-gray-400 hover:text-gray-600"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -850,163 +652,78 @@ export const SurveyManagementPage: React.FC = () => {
               </div>
 
               <div className="space-y-6">
-                {/* 설문 기본 정보 */}
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">설문 제목</label>
-                    <input
-                      type="text"
-                      value={newSurvey.title}
-                      onChange={(e) => setNewSurvey(prev => ({ ...prev, title: e.target.value }))}
-                      className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="설문 제목을 입력하세요"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">설문 설명 (선택사항)</label>
-                    <textarea
-                      value={newSurvey.description}
-                      onChange={(e) => setNewSurvey(prev => ({ ...prev, description: e.target.value }))}
-                      rows={3}
-                      className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="설문에 대한 설명을 입력하세요"
-                    />
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <h3 className="font-medium text-gray-900 mb-2">응답자 정보</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-600">이름:</span>
+                      <span className="ml-2 font-medium">{selectedResponse.studentName}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">이메일:</span>
+                      <span className="ml-2">{selectedResponse.email}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">학급:</span>
+                      <span className="ml-2">
+                        {selectedResponse.grade && selectedResponse.classNumber && selectedResponse.studentNumber
+                          ? `${selectedResponse.grade}학년 ${selectedResponse.classNumber}반 ${selectedResponse.studentNumber}번`
+                          : '정보 없음'
+                        }
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">제출일:</span>
+                      <span className="ml-2">{selectedResponse.submittedAt?.toLocaleDateString()}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">설문:</span>
+                      <span className="ml-2">{selectedResponse.surveyTitle}</span>
+                    </div>
                   </div>
                 </div>
 
-                {/* 질문 목록 */}
                 <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <h4 className="text-md font-medium text-gray-900">질문 목록</h4>
-                    <Button onClick={addQuestion} className="bg-green-600 hover:bg-green-700 text-white">
-                      ➕ 질문 추가
-                    </Button>
-                  </div>
-
+                  <h3 className="font-medium text-gray-900 mb-4">응답 내용</h3>
                   <div className="space-y-4">
-                    {newSurvey.questions.map((question, index) => (
-                      <div key={question.id} className="border border-gray-200 rounded-lg p-4">
-                        <div className="flex items-start justify-between mb-3">
-                          <span className="text-sm font-medium text-gray-500">질문 {index + 1}</span>
-                          <button
-                            onClick={() => removeQuestion(question.id)}
-                            className="text-red-500 hover:text-red-700"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        </div>
-
-                        <div className="space-y-3">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700">질문 내용</label>
-                            <input
-                              type="text"
-                              value={question.question}
-                              onChange={(e) => updateQuestion(question.id, { question: e.target.value })}
-                              className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                              placeholder="질문을 입력하세요"
-                            />
+                                         {selectedResponse.answers && Object.entries(selectedResponse.answers as Record<string, any>).map(([questionId, answer], index) => {
+                      // 해당 설문의 질문 정보 찾기
+                      const survey = surveys.find(s => s.id === selectedResponse.surveyId)
+                      const question = survey?.questions.find(q => q.id === questionId)
+                      
+                      return (
+                        <div key={questionId} className="border border-gray-200 rounded-lg p-4">
+                          <div className="mb-3">
+                            <span className="text-sm font-medium text-gray-500">질문 {index + 1}</span>
+                            <h4 className="text-base font-medium text-gray-900 mt-1">
+                              {question?.question || `질문 ID: ${questionId}`}
+                            </h4>
                           </div>
-
-                          <div className="flex items-center space-x-4">
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700">질문 유형</label>
-                              <select
-                                value={question.type}
-                                onChange={(e) => updateQuestion(question.id, { type: e.target.value as SurveyQuestion['type'] })}
-                                className="mt-1 block border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                              >
-                                <option value="short">단답형</option>
-                                <option value="long">장문형</option>
-                                <option value="multiple">객관식</option>
-                                <option value="rating">평점</option>
-                              </select>
-                            </div>
-
-                            <div className="flex items-center">
-                              <input
-                                type="checkbox"
-                                checked={question.required}
-                                onChange={(e) => updateQuestion(question.id, { required: e.target.checked })}
-                                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                              />
-                              <label className="ml-2 block text-sm text-gray-900">
-                                필수 질문
-                              </label>
-                            </div>
-                          </div>
-
-                          {/* 객관식 옵션 */}
-                          {question.type === 'multiple' && (
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">선택지</label>
-                              <div className="space-y-2">
-                                {question.options?.map((option, optionIndex) => (
-                                  <div key={optionIndex} className="flex items-center space-x-2">
-                                    <input
-                                      type="text"
-                                      value={option}
-                                      onChange={(e) => {
-                                        const newOptions = [...(question.options || [])]
-                                        newOptions[optionIndex] = e.target.value
-                                        updateQuestion(question.id, { options: newOptions })
-                                      }}
-                                      className="flex-1 border border-gray-300 rounded-md px-3 py-1 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                                      placeholder={`선택지 ${optionIndex + 1}`}
-                                    />
-                                    <button
-                                      onClick={() => {
-                                        const newOptions = question.options?.filter((_, i) => i !== optionIndex) || []
-                                        updateQuestion(question.id, { options: newOptions })
-                                      }}
-                                      className="text-red-500 hover:text-red-700"
-                                    >
-                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                      </svg>
-                                    </button>
-                                  </div>
-                                )) || []}
-                                <button
-                                  onClick={() => {
-                                    const newOptions = [...(question.options || []), '']
-                                    updateQuestion(question.id, { options: newOptions })
-                                  }}
-                                  className="text-blue-600 hover:text-blue-800 text-sm"
-                                >
-                                  + 선택지 추가
-                                </button>
-                              </div>
-                            </div>
-                          )}
+                                                     <div className="bg-gray-50 p-3 rounded border">
+                             <p className="text-gray-800">
+                               {Array.isArray(answer) ? answer.join(', ') : String(answer)}
+                             </p>
+                           </div>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
+              </div>
 
-                {/* 버튼 */}
-                <div className="flex justify-end space-x-3 pt-6 border-t">
-                  <Button
-                    onClick={() => setShowCreateForm(false)}
-                    className="bg-gray-300 hover:bg-gray-400 text-gray-700"
-                  >
-                    취소
-                  </Button>
-                  <Button
-                    onClick={handleCreateSurvey}
-                    className="bg-blue-600 hover:bg-blue-700 text-white"
-                  >
-                    설문 생성
-                  </Button>
-                </div>
+              <div className="mt-8 flex justify-end space-x-3">
+                <button
+                  onClick={() => setSelectedResponse(null)}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  닫기
+                </button>
               </div>
             </div>
           </div>
         </div>
       )}
+
     </div>
   )
 } 

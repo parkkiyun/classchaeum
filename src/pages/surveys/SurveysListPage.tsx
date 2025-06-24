@@ -68,7 +68,8 @@ export const SurveysListPage: React.FC = () => {
   }
 
   const copyLink = async (surveyId: string) => {
-    const link = `${window.location.origin}/survey/${surveyId}`
+    const baseUrl = import.meta.env.VITE_APP_URL || window.location.origin
+    const link = `${baseUrl}/survey/${surveyId}`
     try {
       await navigator.clipboard.writeText(link)
       alert('설문 링크가 클립보드에 복사되었습니다!')

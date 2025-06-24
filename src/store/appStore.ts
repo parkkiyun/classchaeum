@@ -84,6 +84,10 @@ interface AppStore extends AppState {
   getGroupWithStudents: (groupId: string, students: Student[]) => GroupWithStudents | null
   getStudentsByGroup: (groupId: string) => Student[]
   getResponsesByGroup: (groupId: string) => SurveyResponse[]
+  
+  // 학생 배정/제거 함수
+  assignStudentsToGroup: (groupId: string, studentIds: string[]) => Promise<void>
+  removeStudentFromGroup: (groupId: string, studentId: string) => Promise<void>
 }
 
 const useAppStore = create<AppStore>()(
@@ -272,6 +276,77 @@ const useAppStore = create<AppStore>()(
         }, false, 'resetSelection'),
         
         clearSurveys: () => set({ selectedSurveys: [] }, false, 'clearSurveys'),
+        
+        // 학생 배정/제거 함수
+        assignStudentsToGroup: async (groupId, studentIds) => {
+          const { groups } = get()
+          const group = groups.find(g => g.id === groupId)
+          if (!group) throw new Error('그룹을 찾을 수 없습니다.')
+          
+          // 중복 제거하고 새로운 학생 ID들 추가
+          const newStudentIds = [...new Set([...group.studentIds, ...studentIds])]
+          
+          try {
+            // Firebase 업데이트
+            const { doc, updateDoc } = await import('firebase/firestore')
+            const { db } = await import('../lib/firebase')
+            
+            const groupRef = doc(db, 'groups', groupId)
+            await updateDoc(groupRef, {
+              studentIds: newStudentIds,
+              updatedAt: new Date()
+            })
+            
+            console.log('✅ Firebase 그룹 업데이트 성공:', groupId, newStudentIds)
+            
+            // 로컬 상태 업데이트
+            set((state) => ({
+              groups: state.groups.map(g => 
+                g.id === groupId 
+                  ? { ...g, studentIds: newStudentIds, updatedAt: new Date() }
+                  : g
+              )
+            }))
+          } catch (error) {
+            console.error('❌ Firebase 그룹 업데이트 실패:', error)
+            throw new Error('학생 배정 저장에 실패했습니다.')
+          }
+        },
+        
+        removeStudentFromGroup: async (groupId, studentId) => {
+          const { groups } = get()
+          const group = groups.find(g => g.id === groupId)
+          if (!group) throw new Error('그룹을 찾을 수 없습니다.')
+          
+          // 학생 ID 제거
+          const newStudentIds = group.studentIds.filter(id => id !== studentId)
+          
+          try {
+            // Firebase 업데이트
+            const { doc, updateDoc } = await import('firebase/firestore')
+            const { db } = await import('../lib/firebase')
+            
+            const groupRef = doc(db, 'groups', groupId)
+            await updateDoc(groupRef, {
+              studentIds: newStudentIds,
+              updatedAt: new Date()
+            })
+            
+            console.log('✅ Firebase 학생 제거 성공:', groupId, studentId)
+            
+            // 로컬 상태 업데이트
+            set((state) => ({
+              groups: state.groups.map(g => 
+                g.id === groupId 
+                  ? { ...g, studentIds: newStudentIds, updatedAt: new Date() }
+                  : g
+              )
+            }))
+          } catch (error) {
+            console.error('❌ Firebase 학생 제거 실패:', error)
+            throw new Error('학생 제거 저장에 실패했습니다.')
+          }
+        },
       }),
       {
         name: 'ai-record-app-storage',

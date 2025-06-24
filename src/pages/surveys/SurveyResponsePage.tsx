@@ -7,6 +7,8 @@ import { LoadingSpinner } from '../../components/ui/LoadingSpinner'
 import { Button } from '../../components/ui/Button'
 import { v4 as uuidv4 } from 'uuid'
 
+// 공개 설문 응답 페이지 (로그인 불필요)
+
 export const SurveyResponsePage: React.FC = (): JSX.Element => {
   const { surveyId } = useParams<{ surveyId: string }>()
   const [searchParams] = useSearchParams()
@@ -19,9 +21,13 @@ export const SurveyResponsePage: React.FC = (): JSX.Element => {
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({})
   const [email, setEmail] = useState('')
   const [studentName, setStudentName] = useState('')
+  const [grade, setGrade] = useState('')
+  const [classNumber, setClassNumber] = useState('')
+  const [studentNumber, setStudentNumber] = useState('')
   const [isEditMode, setIsEditMode] = useState(false)
   const [showEmailForm, setShowEmailForm] = useState(false)
   const [submitted, setSubmitted] = useState(false)
+  const [lastResponseId, setLastResponseId] = useState<string | null>(null)
 
   // 설문 정보 로드
   useEffect(() => {
@@ -87,6 +93,9 @@ export const SurveyResponsePage: React.FC = (): JSX.Element => {
             setAnswers(response.answers)
             setEmail(response.email)
             setStudentName(response.studentName || '')
+            setGrade(responseData.grade?.toString() || '')
+            setClassNumber(responseData.classNumber?.toString() || '')
+            setStudentNumber(responseData.studentNumber?.toString() || '')
             setIsEditMode(true)
           }
         }
@@ -153,11 +162,16 @@ export const SurveyResponsePage: React.FC = (): JSX.Element => {
       }
 
       const responsesRef = collection(db, 'surveys', survey.id, 'responses')
-      await addDoc(responsesRef, {
+      const docRef = await addDoc(responsesRef, {
         ...responseData,
-        id: newResponseId
+        id: newResponseId,
+        grade: parseInt(grade) || null,
+        classNumber: parseInt(classNumber) || null,
+        studentNumber: parseInt(studentNumber) || null
       })
 
+      // 응답 ID 저장 (이메일 발송용)
+      setLastResponseId(docRef.id)
       setSubmitted(true)
       setShowEmailForm(true)
       
@@ -179,6 +193,9 @@ export const SurveyResponsePage: React.FC = (): JSX.Element => {
       await updateDoc(responseRef, {
         answers: answers,
         studentName: studentName,
+        grade: parseInt(grade) || null,
+        classNumber: parseInt(classNumber) || null,
+        studentNumber: parseInt(studentNumber) || null,
         updatedAt: new Date()
       })
 
@@ -199,9 +216,34 @@ export const SurveyResponsePage: React.FC = (): JSX.Element => {
       return
     }
 
-    // TODO: EmailJS 연동하여 수정 링크 이메일 발송
-    alert(`수정 링크가 ${email}로 발송되었습니다! (개발 중: EmailJS 연동 필요)`)
-    setShowEmailForm(false)
+    setSubmitting(true)
+    try {
+      // 응답 ID를 기존 응답 또는 마지막 제출된 응답에서 가져오기
+      const currentResponseId = responseId || lastResponseId || uuidv4()
+      
+      // 이메일 발송 서비스 호출
+      const { sendEditLinkEmail } = await import('../../services/surveyService')
+      const success = await sendEditLinkEmail(
+        survey.id,
+        currentResponseId,
+        email,
+        studentName,
+        survey.title
+      )
+
+      if (success) {
+        alert(`수정 링크가 ${email}로 발송되었습니다! 이메일을 확인해주세요.`)
+      } else {
+        alert('이메일 발송에 실패했습니다. 다시 시도해주세요.')
+      }
+      
+      setShowEmailForm(false)
+    } catch (error) {
+      console.error('이메일 발송 실패:', error)
+      alert('이메일 발송 중 오류가 발생했습니다.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   // 질문 렌더링
@@ -350,13 +392,22 @@ export const SurveyResponsePage: React.FC = (): JSX.Element => {
             <div className="flex space-x-3">
               <Button
                 onClick={handleEmailSubmit}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                disabled={submitting}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
               >
-                수정 링크 받기
+                {submitting ? (
+                  <>
+                    <LoadingSpinner size="sm" />
+                    <span className="ml-2">발송 중...</span>
+                  </>
+                ) : (
+                  '수정 링크 받기'
+                )}
               </Button>
               <Button
                 onClick={() => setShowEmailForm(false)}
-                className="bg-gray-300 hover:bg-gray-400 text-gray-700"
+                disabled={submitting}
+                className="bg-gray-300 hover:bg-gray-400 text-gray-700 disabled:opacity-50"
               >
                 건너뛰기
               </Button>
@@ -442,6 +493,58 @@ export const SurveyResponsePage: React.FC = (): JSX.Element => {
                 />
               </div>
             </div>
+            
+            {/* 학급 정보 */}
+            <div className="mt-4">
+              <h4 className="text-sm font-medium text-gray-700 mb-3">학급 정보</h4>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    학년 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="3"
+                    value={grade}
+                    onChange={(e) => setGrade(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="1"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    반 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={classNumber}
+                    onChange={(e) => setClassNumber(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="1"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    번호 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="40"
+                    value={studentNumber}
+                    onChange={(e) => setStudentNumber(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="1"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -457,7 +560,7 @@ export const SurveyResponsePage: React.FC = (): JSX.Element => {
           <div className="flex justify-end space-x-4">
             <Button
               onClick={handleSubmit}
-              disabled={submitting || (!studentName && !isEditMode)}
+              disabled={submitting || (!studentName && !isEditMode) || (!isEditMode && (!grade || !classNumber || !studentNumber))}
               className="bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting ? (

@@ -36,16 +36,6 @@ export const Layout: React.FC<LayoutProps> = ({
         onClose={() => setIsMobileMenuOpen(false)} 
       />
 
-      {/* 모바일 메뉴 버튼 */}
-      <div className="lg:hidden fixed top-4 left-4 z-30">
-        <button
-          onClick={() => setIsMobileMenuOpen(true)}
-          className="p-2 bg-white rounded-lg shadow-md"
-        >
-          <Menu size={24} className="text-gray-600" />
-        </button>
-      </div>
-
       {/* 메인 콘텐츠 */}
       <main className="flex-1 overflow-y-auto">
         {/* 상단 네비게이션 */}
@@ -56,6 +46,7 @@ export const Layout: React.FC<LayoutProps> = ({
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           searchPlaceholder={searchPlaceholder}
+          onMenuClick={() => setIsMobileMenuOpen(true)}
         >
           {headerActions}
         </TopNavigation>

@@ -124,88 +124,188 @@ export const AdminPage: React.FC = () => {
   // 학생 Excel 업로드 처리
   const handleStudentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
-    if (!file) return
+    if (!file) {
+      console.warn('⚠️ 파일이 선택되지 않음')
+      return
+    }
+
+    console.log('🚀 학생 업로드 시작')
+    console.log('📁 선택된 파일:', {
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      lastModified: new Date(file.lastModified)
+    })
 
     setUploading(true)
     setUploadResult(null)
 
     try {
+      console.log('📖 Excel 파일 읽기 시작')
       const data = await file.arrayBuffer()
+      console.log('📊 파일 버퍼 크기:', data.byteLength, 'bytes')
+      
       const workbook = XLSX.read(data, { type: 'array' })
+      console.log('📚 워크북 시트 목록:', workbook.SheetNames)
+      
       const sheetName = workbook.SheetNames[0]
+      console.log('📄 사용할 시트:', sheetName)
+      
       const worksheet = workbook.Sheets[sheetName]
       const jsonData: ExcelStudent[] = XLSX.utils.sheet_to_json(worksheet)
+      console.log('📋 JSON 변환 완료, 행 수:', jsonData.length)
 
       const errors: string[] = []
       const validStudents: Student[] = []
 
+      console.log('📊 Excel 데이터 파싱 시작:', jsonData.length, '행')
+      console.log('📋 원본 데이터:', jsonData)
+
       jsonData.forEach((row, index) => {
         const rowNum = index + 2
+        console.log(`🔍 ${rowNum}행 처리 중:`, row)
 
-        if (!row.StudentID || !row.Name || !row.Grade || !row.Class || !row.Number) {
-          errors.push(`${rowNum}행: 필수 필드가 누락되었습니다`)
+        // 필수 필드 검증 (StudentID, Name, Grade, Class, Number만 필수)
+        if (!row.StudentID) {
+          console.error(`❌ ${rowNum}행: StudentID 누락`)
+          errors.push(`${rowNum}행: StudentID가 누락되었습니다`)
+          return
+        }
+        if (!row.Name) {
+          console.error(`❌ ${rowNum}행: Name 누락`)
+          errors.push(`${rowNum}행: Name이 누락되었습니다`)
+          return
+        }
+        if (!row.Grade) {
+          console.error(`❌ ${rowNum}행: Grade 누락`)
+          errors.push(`${rowNum}행: Grade가 누락되었습니다`)
+          return
+        }
+        if (!row.Class) {
+          console.error(`❌ ${rowNum}행: Class 누락`)
+          errors.push(`${rowNum}행: Class가 누락되었습니다`)
+          return
+        }
+        if (!row.Number) {
+          console.error(`❌ ${rowNum}행: Number 누락`)
+          errors.push(`${rowNum}행: Number가 누락되었습니다`)
           return
         }
 
         if (validStudents.some(s => s.id === row.StudentID)) {
+          console.error(`❌ ${rowNum}행: 중복 StudentID:`, row.StudentID)
           errors.push(`${rowNum}행: 중복된 StudentID입니다 (${row.StudentID})`)
           return
         }
 
-        const student: Student = {
-          id: row.StudentID,
-          name: row.Name,
-          grade: Number(row.Grade),
-          class: Number(row.Class),
-          number: Number(row.Number),
-          birthdate: row.Birthdate,
-          gender: row.Gender as 'M' | 'F',
-          subjects: row.Subjects ? row.Subjects.split(',').map(s => s.trim()) : [],
-          createdAt: new Date(),
-          updatedAt: new Date()
-        }
+        try {
+          const student: Student = {
+            id: row.StudentID,
+            name: row.Name,
+            email: row.Email || undefined,
+            grade: Number(row.Grade),
+            class: Number(row.Class),
+            number: Number(row.Number),
+            birthdate: row.Birthdate || undefined,
+            gender: (row.Gender as 'M' | 'F') || undefined,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          }
 
-        validStudents.push(student)
+          console.log(`✅ ${rowNum}행 학생 객체 생성 성공:`, student)
+          validStudents.push(student)
+        } catch (error) {
+          console.error(`❌ ${rowNum}행 학생 객체 생성 실패:`, error)
+          errors.push(`${rowNum}행: 학생 데이터 생성 실패 - ${error}`)
+        }
       })
 
+      console.log('📈 검증 완료 - 유효한 학생:', validStudents.length, '개, 오류:', errors.length, '개')
+
       // Firebase에 저장
+      console.log('🔥 Firebase 저장 시작 - 대상 학생:', validStudents.length, '명')
+      console.log('👥 기존 학생 목록:', students.map(s => ({ id: s.id, name: s.name })))
+      
       const savedStudents: Student[] = []
       for (const student of validStudents) {
+        console.log(`💾 학생 저장 시도: ${student.name} (ID: ${student.id})`)
+        
         const existingStudent = students.find(s => s.id === student.id)
         if (existingStudent) {
+          console.warn(`⚠️ 중복 학생 발견: ${student.id} (${student.name})`)
           errors.push(`중복된 학생 ID: ${student.id} (${student.name})`)
           continue
         }
 
         try {
-          const studentsRef = collection(db, 'students')
-          const docRef = await addDoc(studentsRef, {
-            ...student,
+          console.log('📝 Firebase 문서 생성 중:', student)
+          
+          // Firebase에 저장할 데이터 준비
+          const studentData = {
+            id: student.id,
+            name: student.name,
+            email: student.email || null,
+            grade: student.grade,
+            class: student.class,
+            number: student.number,
+            birthdate: student.birthdate || null,
+            gender: student.gender || null,
             createdAt: new Date(),
             updatedAt: new Date()
-          })
+          }
+          
+          console.log('📤 Firebase에 저장할 데이터:', studentData)
+          
+          const studentsRef = collection(db, 'students')
+          const docRef = await addDoc(studentsRef, studentData)
+          
+          console.log(`✅ Firebase 저장 성공 - 문서 ID: ${docRef.id}`)
           savedStudents.push({ ...student, id: docRef.id })
+          
         } catch (error) {
-          errors.push(`${student.name} 저장 실패`)
+          console.error(`❌ Firebase 저장 실패 - ${student.name}:`, error)
+          console.error('🔍 상세 오류:', {
+            code: (error as any)?.code,
+            message: (error as any)?.message,
+            stack: (error as any)?.stack
+          })
+          errors.push(`${student.name} 저장 실패: ${(error as any)?.message || error}`)
         }
       }
+      
+      console.log('📊 Firebase 저장 완료 - 성공:', savedStudents.length, '명, 실패:', errors.length - (validStudents.length - savedStudents.length), '건')
 
       if (savedStudents.length > 0) {
+        console.log('🔄 학생 목록 새로고침 시작')
         await loadStudentsFromFirebase()
+        console.log('✅ 학생 목록 새로고침 완료')
       }
 
-      setUploadResult({
+      const result = {
         success: savedStudents.length,
         errors
-      })
+      }
+      
+      console.log('🎯 최종 업로드 결과:', result)
+      setUploadResult(result)
 
     } catch (error) {
-      console.error('Excel 업로드 오류:', error)
-      setUploadResult({
-        success: 0,
-        errors: ['파일을 읽는 중 오류가 발생했습니다.']
+      console.error('❌ Excel 업로드 전체 오류:', error)
+      console.error('🔍 상세 오류 정보:', {
+        name: (error as any)?.name,
+        message: (error as any)?.message,
+        stack: (error as any)?.stack
       })
+      
+      const errorResult = {
+        success: 0,
+        errors: [`파일을 읽는 중 오류가 발생했습니다: ${(error as any)?.message || error}`]
+      }
+      
+      console.log('💥 오류 결과:', errorResult)
+      setUploadResult(errorResult)
     } finally {
+      console.log('🏁 업로드 프로세스 종료')
       setUploading(false)
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
@@ -238,9 +338,9 @@ export const AdminPage: React.FC = () => {
         Grade: 1,
         Class: 3,
         Number: 1,
-        Birthdate: '2008-03-15',
-        Gender: 'M',
-        Subjects: '국어,수학,영어'
+        Email: '',
+        Birthdate: '',
+        Gender: ''
       },
       {
         StudentID: '2025-1-3-02',
@@ -248,9 +348,9 @@ export const AdminPage: React.FC = () => {
         Grade: 1,
         Class: 3,
         Number: 2,
-        Birthdate: '2008-05-22',
-        Gender: 'F',
-        Subjects: '국어,수학,과학'
+        Email: '',
+        Birthdate: '',
+        Gender: ''
       }
     ]
 
@@ -417,7 +517,11 @@ export const AdminPage: React.FC = () => {
                       <div className="flex items-start justify-between">
                         <div>
                           <h3 className="font-medium text-blue-900">학생 데이터 관리</h3>
-                          <p className="text-sm text-blue-700 mt-1">Excel 파일로 학생 정보를 일괄 업로드하거나 개별 관리하세요</p>
+                          <p className="text-sm text-blue-700 mt-1">
+                            Excel 파일로 학생 정보를 일괄 업로드하세요<br/>
+                            <strong>필수 필드:</strong> StudentID, Name, Grade, Class, Number<br/>
+                            <strong>선택 필드:</strong> Email, Birthdate, Gender
+                          </p>
                         </div>
                         <div className="flex items-center space-x-3">
                           <Button
@@ -504,10 +608,10 @@ export const AdminPage: React.FC = () => {
                             <thead className="bg-gray-50">
                               <tr>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">학생 정보</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">이메일</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">학년/반/번호</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">생년월일</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">성별</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">담당 과목</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">관리</th>
                               </tr>
                             </thead>
@@ -530,6 +634,9 @@ export const AdminPage: React.FC = () => {
                                     </div>
                                   </td>
                                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                    {student.email || '-'}
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                     {student.grade}학년 {student.class}반 {student.number}번
                                   </td>
                                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
@@ -537,18 +644,6 @@ export const AdminPage: React.FC = () => {
                                   </td>
                                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                     {student.gender === 'M' ? '남' : student.gender === 'F' ? '여' : '-'}
-                                  </td>
-                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                    <div className="flex flex-wrap gap-1">
-                                      {student.subjects?.map((subject, index) => (
-                                        <span
-                                          key={index}
-                                          className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
-                                        >
-                                          {subject}
-                                        </span>
-                                      )) || '-'}
-                                    </div>
                                   </td>
                                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                     <Button

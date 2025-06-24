@@ -153,7 +153,12 @@ export const sendEditLinkEmail = async (
   surveyTitle: string
 ): Promise<boolean> => {
   try {
-    const editLink = `${window.location.origin}/survey/${surveyId}/edit?rid=${responseId}`
+    console.log('📧 이메일 발송 시작:', { surveyId, responseId, email, studentName, surveyTitle })
+    
+    const baseUrl = import.meta.env.VITE_APP_URL || window.location.origin
+    const editLink = `${baseUrl}/survey/${surveyId}?rid=${responseId}`
+    
+    console.log('🔗 생성된 수정 링크:', editLink)
     
     const success = await sendEditLink({
       to_email: email,
@@ -162,18 +167,26 @@ export const sendEditLinkEmail = async (
       edit_link: editLink
     })
 
+    console.log('📨 이메일 발송 결과:', success)
+
     if (success) {
-      // 이메일 발송 상태 업데이트
-      const responseRef = doc(db, 'surveys', surveyId, 'responses', responseId)
-      await updateDoc(responseRef, {
-        editEmailSent: true,
-        updatedAt: Timestamp.now()
-      })
+      try {
+        // 이메일 발송 상태 업데이트
+        const responseRef = doc(db, 'surveys', surveyId, 'responses', responseId)
+        await updateDoc(responseRef, {
+          editEmailSent: true,
+          editEmailSentAt: Timestamp.now(),
+          updatedAt: Timestamp.now()
+        })
+        console.log('✅ 이메일 발송 상태 업데이트 완료')
+      } catch (updateError) {
+        console.warn('⚠️ 이메일 발송 상태 업데이트 실패 (이메일은 발송됨):', updateError)
+      }
     }
 
     return success
   } catch (error) {
-    console.error('수정 링크 이메일 발송 실패:', error)
+    console.error('❌ 수정 링크 이메일 발송 실패:', error)
     return false
   }
 }

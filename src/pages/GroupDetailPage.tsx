@@ -6,17 +6,18 @@ import { useAuth } from '../contexts/AuthContext'
 import { useAppStore } from '../store/appStore'
 import type { Group } from '../types'
 import { LoadingSpinner } from '../components/ui/LoadingSpinner'
+import { TabNavigation, type Tab } from '../components/ui/TabNavigation'
 import { SurveyManagementPage } from './groups/SurveyManagementPage'
 import { RecordsPage } from './groups/RecordsPage'
 import { HanolchaeumPage } from './groups/HanolchaeumPage'
 
 type TabType = 'dashboard' | 'survey-management' | 'records' | 'hanolchaeum'
 
-const tabs = [
-  { id: 'dashboard' as TabType, name: '클래스 대시보드', icon: '📊' },
-  { id: 'survey-management' as TabType, name: '설문 관리', icon: '📋' },
-  { id: 'records' as TabType, name: '기록 조회', icon: '📝' },
-  { id: 'hanolchaeum' as TabType, name: '클래스채움', icon: '🤖' }
+const tabs: Tab[] = [
+  { id: 'dashboard', name: '클래스 대시보드', icon: '📊' },
+  { id: 'survey-management', name: '설문 관리', icon: '📋' },
+  { id: 'records', name: '기록 조회', icon: '📝' },
+  { id: 'hanolchaeum', name: '클래스채움', icon: '🤖' }
 ]
 
 export const GroupDetailPage: React.FC = () => {
@@ -25,9 +26,17 @@ export const GroupDetailPage: React.FC = () => {
   const { teacher } = useAuth()
   const { groups, students, getGroupWithStudents } = useAppStore()
   
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard')
+  const [activeTab, setActiveTab] = useState<string>('dashboard')
   const [currentGroup, setCurrentGroup] = useState<Group | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // URL 해시를 통한 탭 설정
+  useEffect(() => {
+    const hash = window.location.hash.replace('#', '')
+    if (hash === 'surveys') {
+      setActiveTab('survey-management')
+    }
+  }, [])
 
   // 클래스 정보 로드
   useEffect(() => {
@@ -172,24 +181,11 @@ export const GroupDetailPage: React.FC = () => {
       </div>
 
       {/* 탭 네비게이션 */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex space-x-8">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap flex items-center space-x-2 ${
-                activeTab === tab.id
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              <span className="text-lg">{tab.icon}</span>
-              <span>{tab.name}</span>
-            </button>
-          ))}
-        </nav>
-      </div>
+      <TabNavigation
+        tabs={tabs}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+      />
 
       {/* 탭 콘텐츠 */}
       <div className="mt-6">
@@ -201,8 +197,26 @@ export const GroupDetailPage: React.FC = () => {
 
 // 클래스 대시보드 컴포넌트
 const GroupDashboard: React.FC<{ group: Group }> = ({ group }) => {
-  const { students, getGroupWithStudents } = useAppStore()
+  const { students, getGroupWithStudents, removeStudentFromGroup } = useAppStore()
+  const navigate = useNavigate()
+  
   const groupWithStudents = getGroupWithStudents(group.id, students)
+
+  const handleRemoveStudent = async (studentId: string) => {
+    if (!confirm('이 학생을 클래스에서 제거하시겠습니까?')) return
+    
+    try {
+      await removeStudentFromGroup(group.id, studentId)
+      alert('학생이 클래스에서 제거되었습니다.')
+    } catch (error) {
+      console.error('학생 제거 실패:', error)
+      alert('학생 제거 중 오류가 발생했습니다.')
+    }
+  }
+
+  const handleAssignStudents = () => {
+    navigate(`/groups/${group.id}/assign-students`)
+  }
 
   return (
     <div className="space-y-6">
@@ -259,8 +273,17 @@ const GroupDashboard: React.FC<{ group: Group }> = ({ group }) => {
 
       {/* 학생 목록 */}
       <div className="bg-white rounded-lg shadow">
-        <div className="px-6 py-4 border-b border-gray-200">
+        <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
           <h3 className="text-lg font-semibold text-gray-900">배정된 학생 목록</h3>
+          <button
+            onClick={handleAssignStudents}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center space-x-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            <span>학생배정</span>
+          </button>
         </div>
         
         {!groupWithStudents || groupWithStudents.students.length === 0 ? (
@@ -270,7 +293,7 @@ const GroupDashboard: React.FC<{ group: Group }> = ({ group }) => {
             </svg>
             <h4 className="mt-2 text-sm font-medium text-gray-900">배정된 학생이 없습니다</h4>
             <p className="mt-1 text-sm text-gray-500">
-              설문 관리 탭에서 학생을 배정해보세요.
+              학생배정 버튼을 클릭하여 학생을 배정해보세요.
             </p>
           </div>
         ) : (
@@ -282,6 +305,7 @@ const GroupDashboard: React.FC<{ group: Group }> = ({ group }) => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">학번</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">설문 상태</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">기록 상태</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">관리</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -316,6 +340,14 @@ const GroupDashboard: React.FC<{ group: Group }> = ({ group }) => {
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
                         미생성
                       </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <button
+                        onClick={() => handleRemoveStudent(student.id)}
+                        className="text-red-600 hover:text-red-900"
+                      >
+                        제거
+                      </button>
                     </td>
                   </tr>
                 ))}
